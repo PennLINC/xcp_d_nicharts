@@ -1,14 +1,14 @@
 FROM pennlinc/xcp_d:unstable
 
 # Install xcp_d extension
-COPY . /src/xcp_d_extension
+COPY . /src/xcp_d_nicharts
 
 ARG VERSION=0.0.1
 
 # Force static versioning within container
-RUN echo "${VERSION}" > /src/xcp_d_extension/xcp_d/VERSION && \
-    echo "include xcp_d_extension/VERSION" >> /src/xcp_d_extension/MANIFEST.in && \
-    pip install --no-cache-dir "/src/xcp_d_extension[all]"
+RUN echo "${VERSION}" > /src/xcp_d_nicharts/xcp_d/VERSION && \
+    echo "include xcp_d_nicharts/VERSION" >> /src/xcp_d_nicharts/MANIFEST.in && \
+    pip install --no-cache-dir "/src/xcp_d_nicharts[all]"
 
 RUN find $HOME -type d -exec chmod go=u {} + && \
     find $HOME -type f -exec chmod go=u {} + && \
@@ -17,7 +17,7 @@ RUN find $HOME -type d -exec chmod go=u {} + && \
 RUN ldconfig
 WORKDIR /tmp/
 
-ENTRYPOINT ["/usr/local/miniconda/bin/xcp_d_extension"]
+ENTRYPOINT ["/usr/local/miniconda/bin/xcp_d_nicharts"]
 
 ARG BUILD_DATE
 ARG VCS_REF
