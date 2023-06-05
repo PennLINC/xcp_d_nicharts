@@ -46,39 +46,17 @@ LOGGER = logging.getLogger("nipype.workflow")
 
 
 @fill_doc
-def init_xcpd_wf(
+def init_xcpd_ukb_wf(
     fmri_dir,
     output_dir,
     work_dir,
     subject_list,
     analysis_level,
-    task_id,
     bids_filters,
-    bandpass_filter,
-    high_pass,
-    low_pass,
-    bpf_order,
-    fd_thresh,
-    motion_filter_type,
-    motion_filter_order,
-    band_stop_min,
-    band_stop_max,
-    despike,
-    head_radius,
-    params,
-    smoothing,
-    custom_confounds_folder,
-    dummy_scans,
-    cifti,
     omp_nthreads,
     layout=None,
-    process_surfaces=False,
-    dcan_qc=False,
-    input_type="fmriprep",
     min_coverage=0.5,
-    min_time=100,
-    combineruns=False,
-    name="xcpd_wf",
+    name="xcpd_ukb_wf",
 ):
     """Build and organize execution of xcp_d pipeline.
 
@@ -187,34 +165,12 @@ def init_xcpd_wf(
     for subject_id in subject_list:
         single_subj_wf = init_subject_wf(
             layout=layout,
-            high_pass=high_pass,
-            low_pass=low_pass,
-            bpf_order=bpf_order,
-            motion_filter_type=motion_filter_type,
-            motion_filter_order=motion_filter_order,
-            band_stop_min=band_stop_min,
-            band_stop_max=band_stop_max,
-            bandpass_filter=bandpass_filter,
             fmri_dir=fmri_dir,
             omp_nthreads=omp_nthreads,
             subject_id=subject_id,
-            cifti=cifti,
-            despike=despike,
-            head_radius=head_radius,
-            params=params,
-            task_id=task_id,
             bids_filters=bids_filters,
-            smoothing=smoothing,
             output_dir=output_dir,
-            dummy_scans=dummy_scans,
-            custom_confounds_folder=custom_confounds_folder,
-            fd_thresh=fd_thresh,
-            process_surfaces=process_surfaces,
-            dcan_qc=dcan_qc,
-            input_type=input_type,
             min_coverage=min_coverage,
-            min_time=min_time,
-            combineruns=combineruns,
             name=f"single_subject_{subject_id}_wf",
         )
 
@@ -236,31 +192,9 @@ def init_xcpd_wf(
 def init_subject_wf(
     fmri_dir,
     subject_id,
-    input_type,
-    process_surfaces,
-    combineruns,
-    cifti,
-    task_id,
     bids_filters,
-    bandpass_filter,
-    high_pass,
-    low_pass,
-    bpf_order,
-    motion_filter_type,
-    motion_filter_order,
-    band_stop_min,
-    band_stop_max,
-    smoothing,
-    head_radius,
-    params,
     output_dir,
-    custom_confounds_folder,
-    dummy_scans,
-    fd_thresh,
-    despike,
-    dcan_qc,
     min_coverage,
-    min_time,
     omp_nthreads,
     layout,
     name,
@@ -348,23 +282,11 @@ def init_subject_wf(
     ----------
     .. footbibliography::
     """
-    layout, subj_data = collect_data(
+    subj_data = collect_ukb_data(
         bids_dir=fmri_dir,
-        input_type=input_type,
         participant_label=subject_id,
-        task=task_id,
         bids_filters=bids_filters,
         bids_validate=False,
-        cifti=cifti,
-        layout=layout,
-    )
-    t1w_available = subj_data["t1w"] is not None
-    t2w_available = subj_data["t2w"] is not None
-    primary_anat = "T1w" if subj_data["t1w"] else "T2w"
-
-    mesh_available, shape_available, standard_space_mesh, surface_data = collect_surface_data(
-        layout=layout,
-        participant_label=subject_id,
     )
 
     # determine the appropriate post-processing workflow
@@ -405,29 +327,12 @@ def init_subject_wf(
     inputnode.inputs.template_to_anat_xfm = subj_data["template_to_anat_xfm"]
     inputnode.inputs.anat_to_template_xfm = subj_data["anat_to_template_xfm"]
 
-    # surface mesh files (required for brainsprite/warp workflows)
-    inputnode.inputs.lh_pial_surf = surface_data["lh_pial_surf"]
-    inputnode.inputs.rh_pial_surf = surface_data["rh_pial_surf"]
-    inputnode.inputs.lh_wm_surf = surface_data["lh_wm_surf"]
-    inputnode.inputs.rh_wm_surf = surface_data["rh_wm_surf"]
-
-    # optional surface shape files (used by surface-warping workflow)
-    inputnode.inputs.lh_sulcal_depth = surface_data["lh_sulcal_depth"]
-    inputnode.inputs.rh_sulcal_depth = surface_data["rh_sulcal_depth"]
-    inputnode.inputs.lh_sulcal_curv = surface_data["lh_sulcal_curv"]
-    inputnode.inputs.rh_sulcal_curv = surface_data["rh_sulcal_curv"]
-    inputnode.inputs.lh_cortical_thickness = surface_data["lh_cortical_thickness"]
-    inputnode.inputs.rh_cortical_thickness = surface_data["rh_cortical_thickness"]
-
     workflow = Workflow(name=name)
 
-    info_dict = get_preproc_pipeline_info(input_type=input_type, fmri_dir=fmri_dir)
-
     workflow.__desc__ = f"""
-### Post-processing of {input_type} outputs
+### Post-processing of UK Biobank outputs
 The eXtensible Connectivity Pipeline- DCAN (XCP-D) [@mitigating_2018;@satterthwaite_2013]
-was used to post-process the outputs of *{info_dict["name"]}* version {info_dict["version"]}
-{info_dict["references"]}.
+was used to post-process the outputs of UK Biobank.
 XCP-D was built with *Nipype* version {nipype_ver} [@nipype1, RRID:SCR_002502].
 """
 
@@ -435,7 +340,7 @@ XCP-D was built with *Nipype* version {nipype_ver} [@nipype1, RRID:SCR_002502].
 
 Many internal operations of *XCP-D* use
 *AFNI* [@cox1996afni;@cox1997software],
-{"*Connectome Workbench* [@marcus2011informatics], " if cifti else ""}*ANTS* [@avants2009advanced],
+*ANTS* [@avants2009advanced],
 *TemplateFlow* version {templateflow.__version__} [@ciric2022templateflow],
 *matplotlib* version {matplotlib.__version__} [@hunter2007matplotlib],
 *Nibabel* version {nb.__version__} [@brett_matthew_2022_6658382],
@@ -491,240 +396,30 @@ It is released under the [CC0](https://creativecommons.org/publicdomain/zero/1.0
     # Extract target volumetric space for T1w image
     target_space = get_entity(subj_data["anat_to_template_xfm"], "to")
 
-    postprocess_anat_wf = init_postprocess_anat_wf(
-        output_dir=output_dir,
-        input_type=input_type,
-        t1w_available=t1w_available,
-        t2w_available=t2w_available,
-        target_space=target_space,
-        dcan_qc=dcan_qc,
-        omp_nthreads=omp_nthreads,
-        mem_gb=1,
-        name="postprocess_anat_wf",
-    )
+    # Extract global signal from BOLD file
 
-    # fmt:off
-    workflow.connect([
-        (inputnode, postprocess_anat_wf, [
-            ("t1w", "inputnode.t1w"),
-            ("t2w", "inputnode.t2w"),
-            ("anat_dseg", "inputnode.anat_dseg"),
-            ("anat_to_template_xfm", "inputnode.anat_to_template_xfm"),
-        ]),
-    ])
-    # fmt:on
+    # Run connectivity workflow
 
-    if process_surfaces or (dcan_qc and mesh_available):
-        # Run surface post-processing workflow if we want to warp meshes to standard space *or*
-        # generate brainsprite.
-        postprocess_surfaces_wf = init_postprocess_surfaces_wf(
-            fmri_dir=fmri_dir,
-            subject_id=subject_id,
-            dcan_qc=dcan_qc,
-            mesh_available=mesh_available,
-            standard_space_mesh=standard_space_mesh,
-            shape_available=shape_available,
-            process_surfaces=process_surfaces,
+    n_runs = len(preproc_files)
+    for i_run, bold_file in enumerate(preproc_files):
+        run_data = collect_run_data(fmri_dir, bold_file)
+
+        postprocess_bold_wf = init_postprocess_ukbiobank_wf(
+            bold_file=bold_file,
             output_dir=output_dir,
-            t1w_available=t1w_available,
-            t2w_available=t2w_available,
-            mem_gb=1,
+            run_data=run_data,
+            n_runs=n_runs,
+            min_coverage=min_coverage,
             omp_nthreads=omp_nthreads,
-            name="postprocess_surfaces_wf",
+            layout=layout,
+            name=f"postprocess_ukbiobank_{i_run}_wf",
         )
 
         # fmt:off
         workflow.connect([
-            (inputnode, postprocess_surfaces_wf, [
-                ("lh_pial_surf", "inputnode.lh_pial_surf"),
-                ("rh_pial_surf", "inputnode.rh_pial_surf"),
-                ("lh_wm_surf", "inputnode.lh_wm_surf"),
-                ("rh_wm_surf", "inputnode.rh_wm_surf"),
-                ("anat_to_template_xfm", "inputnode.anat_to_template_xfm"),
-                ("template_to_anat_xfm", "inputnode.template_to_anat_xfm"),
-                ("lh_sulcal_depth", "inputnode.lh_sulcal_depth"),
-                ("rh_sulcal_depth", "inputnode.rh_sulcal_depth"),
-                ("lh_sulcal_curv", "inputnode.lh_sulcal_curv"),
-                ("rh_sulcal_curv", "inputnode.rh_sulcal_curv"),
-                ("lh_cortical_thickness", "inputnode.lh_cortical_thickness"),
-                ("rh_cortical_thickness", "inputnode.rh_cortical_thickness"),
-            ]),
+            (inputnode, postprocess_bold_wf, [("bold_file", "inputnode.bold_file")]),
         ])
         # fmt:on
-
-        if process_surfaces or standard_space_mesh:
-            # Use standard-space structurals
-            # fmt:off
-            workflow.connect([
-                (postprocess_anat_wf, postprocess_surfaces_wf, [
-                    ("outputnode.t1w", "inputnode.t1w"),
-                    ("outputnode.t2w", "inputnode.t2w"),
-                ]),
-            ])
-            # fmt:on
-        else:
-            # Use native-space structurals
-            # fmt:off
-            workflow.connect([
-                (inputnode, postprocess_surfaces_wf, [
-                    ("t1w", "inputnode.t1w"),
-                    ("t2w", "inputnode.t2w"),
-                ]),
-            ])
-            # fmt:on
-
-    # Estimate head radius, if necessary
-    head_radius = estimate_brain_radius(
-        mask_file=subj_data["anat_brainmask"],
-        head_radius=head_radius,
-    )
-
-    n_runs = len(preproc_files)
-    preproc_files = group_across_runs(preproc_files)
-    run_counter = 0
-    for ent_set, task_files in enumerate(preproc_files):
-        # Assuming TR is constant across runs for a given combination of entities.
-        TR = _get_tr(nb.load(task_files[0]))
-
-        n_task_runs = len(task_files)
-        if combineruns and (n_task_runs > 1):
-            merge_elements = [
-                "name_source",
-                "preprocessed_bold",
-                "fmriprep_confounds_file",
-                "filtered_motion",
-                "temporal_mask",
-                "uncensored_denoised_bold",
-                "interpolated_filtered_bold",
-                "censored_denoised_bold",
-                "smoothed_denoised_bold",
-                "anat_to_native_xfm",
-                "bold_mask",
-                "boldref",
-                "atlas_names",  # this will be exactly the same across runs
-                "timeseries",
-                "timeseries_ciftis",
-            ]
-            merge_dict = {
-                io_name: pe.Node(
-                    niu.Merge(n_task_runs, no_flatten=True),
-                    name=f"collect_{io_name}_{ent_set}",
-                )
-                for io_name in merge_elements
-            }
-
-        for j_run, bold_file in enumerate(task_files):
-            run_data = collect_run_data(
-                layout,
-                input_type,
-                bold_file,
-                cifti=cifti,
-                primary_anat=primary_anat,
-            )
-
-            post_scrubbing_duration = flag_bad_run(
-                fmriprep_confounds_file=run_data["confounds"],
-                dummy_scans=dummy_scans,
-                TR=run_data["bold_metadata"]["RepetitionTime"],
-                motion_filter_type=motion_filter_type,
-                motion_filter_order=motion_filter_order,
-                band_stop_min=band_stop_min,
-                band_stop_max=band_stop_max,
-                head_radius=head_radius,
-                fd_thresh=fd_thresh,
-            )
-            if (min_time >= 0) and (post_scrubbing_duration < min_time):
-                LOGGER.warning(
-                    f"Less than {min_time} seconds in {bold_file} survive high-motion outlier "
-                    f"scrubbing ({post_scrubbing_duration}). "
-                    "This run will not be processed."
-                )
-                continue
-
-            postprocess_bold_wf = init_postprocess_bold_wf(
-                bold_file=bold_file,
-                bandpass_filter=bandpass_filter,
-                high_pass=high_pass,
-                low_pass=low_pass,
-                bpf_order=bpf_order,
-                motion_filter_type=motion_filter_type,
-                motion_filter_order=motion_filter_order,
-                band_stop_min=band_stop_min,
-                band_stop_max=band_stop_max,
-                smoothing=smoothing,
-                head_radius=head_radius,
-                params=params,
-                output_dir=output_dir,
-                custom_confounds_folder=custom_confounds_folder,
-                dummy_scans=dummy_scans,
-                fd_thresh=fd_thresh,
-                despike=despike,
-                dcan_qc=dcan_qc,
-                run_data=run_data,
-                t1w_available=t1w_available,
-                t2w_available=t2w_available,
-                n_runs=n_runs,
-                min_coverage=min_coverage,
-                omp_nthreads=omp_nthreads,
-                layout=layout,
-                name=f"{'cifti' if cifti else 'nifti'}_postprocess_{run_counter}_wf",
-            )
-            run_counter += 1
-
-            # fmt:off
-            workflow.connect([
-                (postprocess_anat_wf, postprocess_bold_wf, [
-                    ("outputnode.t1w", "inputnode.t1w"),
-                    ("outputnode.t2w", "inputnode.t2w"),
-                ]),
-            ])
-            # fmt:on
-
-            if not cifti:
-                # fmt:off
-                workflow.connect([
-                    (inputnode, postprocess_bold_wf, [
-                        ("anat_brainmask", "inputnode.anat_brainmask"),
-                        ("template_to_anat_xfm", "inputnode.template_to_anat_xfm"),
-                    ]),
-                ])
-                # fmt:on
-
-            if combineruns and (n_task_runs > 1):
-                for io_name, node in merge_dict.items():
-                    # fmt:off
-                    workflow.connect([
-                        (postprocess_bold_wf, node, [(f"outputnode.{io_name}", f"in{j_run + 1}")]),
-                    ])
-                    # fmt:on
-
-        if combineruns and (n_task_runs > 1):
-            concatenate_data_wf = init_concatenate_data_wf(
-                output_dir=output_dir,
-                motion_filter_type=motion_filter_type,
-                mem_gb=1,
-                omp_nthreads=omp_nthreads,
-                TR=TR,
-                head_radius=head_radius,
-                smoothing=smoothing,
-                cifti=cifti,
-                dcan_qc=dcan_qc,
-                name=f"concatenate_entity_set_{ent_set}_wf",
-            )
-
-            # fmt:off
-            workflow.connect([
-                (inputnode, concatenate_data_wf, [
-                    ("anat_brainmask", "inputnode.anat_brainmask"),
-                    ("template_to_anat_xfm", "inputnode.template_to_anat_xfm"),
-                ]),
-            ])
-            # fmt:on
-
-            for io_name, node in merge_dict.items():
-                # fmt:off
-                workflow.connect([(node, concatenate_data_wf, [("out", f"inputnode.{io_name}")])])
-                # fmt:on
 
     # fmt:off
     workflow.connect([

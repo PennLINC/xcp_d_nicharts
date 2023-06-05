@@ -11,13 +11,7 @@ from time import strftime
 
 from niworkflows import NIWORKFLOWS_LOG
 
-from xcp_d.cli.parser_utils import (
-    _float_or_auto,
-    _int_or_auto,
-    _restricted_float,
-    check_deps,
-    json_file,
-)
+from xcp_d.cli.parser_utils import _restricted_float, check_deps
 
 warnings.filterwarnings("ignore")
 
@@ -30,7 +24,7 @@ def get_parser():
     """Build parser object."""
     from xcp_d.__about__ import __version__
 
-    verstr = f"xcp_d v{__version__}"
+    verstr = f"xcp_d_ukb v{__version__}"
 
     parser = ArgumentParser(
         description="xcp_d postprocessing workflow of fMRI data",
@@ -77,48 +71,6 @@ def get_parser():
         help=(
             "A space-delimited list of participant identifiers, or a single identifier. "
             "The 'sub-' prefix can be removed."
-        ),
-    )
-    g_bids.add_argument(
-        "-t",
-        "--task-id",
-        "--task_id",
-        action="store",
-        help=(
-            "The name of a specific task to postprocess. "
-            "By default, all tasks will be postprocessed. "
-            "If you want to select more than one task to postprocess (but not all of them), "
-            "you can either run XCP-D with the --task-id parameter, separately for each task, "
-            "or you can use the --bids-filter-file to specify the tasks to postprocess."
-        ),
-    )
-    g_bids.add_argument(
-        "--bids-filter-file",
-        dest="bids_filters",
-        action="store",
-        type=json_file,
-        default=None,
-        metavar="FILE",
-        help="A JSON file defining BIDS input filters using PyBIDS.",
-    )
-    g_bids.add_argument(
-        "-m",
-        "--combineruns",
-        action="store_true",
-        default=False,
-        help="After denoising, concatenate each derivative from each task across runs.",
-    )
-
-    g_surfx = parser.add_argument_group("Options for cifti processing")
-    g_surfx.add_argument(
-        "-s",
-        "--cifti",
-        action="store_true",
-        default=False,
-        help=(
-            "Postprocess CIFTI inputs instead of NIfTIs. "
-            "A preprocessing pipeline with CIFTI derivatives is required for this flag to work. "
-            "This flag is enabled by default for the 'hcp' and 'dcan' input types."
         ),
     )
 
@@ -181,60 +133,6 @@ def get_parser():
 
     g_param = parser.add_argument_group("Postprocessing parameters")
     g_param.add_argument(
-        "--smoothing",
-        default=6,
-        action="store",
-        type=float,
-        help=(
-            "FWHM, in millimeters, of the Gaussian smoothing kernel to apply to the denoised BOLD "
-            "data. "
-            "This may be set to 0."
-        ),
-    )
-    g_param.add_argument(
-        "--despike",
-        action="store_true",
-        default=False,
-        help="Despike the BOLD data before postprocessing.",
-    )
-    g_param.add_argument(
-        "-p",
-        "--nuisance-regressors",
-        "--nuisance_regressors",
-        dest="nuisance_regressors",
-        required=False,
-        choices=[
-            "27P",
-            "36P",
-            "24P",
-            "acompcor",
-            "aroma",
-            "acompcor_gsr",
-            "aroma_gsr",
-            "custom",
-        ],
-        default="36P",
-        type=str,
-        help=(
-            "Nuisance parameters to be selected. "
-            "Descriptions of each of the options are included in xcp_d's documentation."
-        ),
-    )
-    g_param.add_argument(
-        "-c",
-        "--custom_confounds",
-        "--custom-confounds",
-        required=False,
-        default=None,
-        type=Path,
-        help=(
-            "Custom confounds to be added to the nuisance regressors. "
-            "Must be a folder containing confounds files, "
-            "in which the file with the name matching the preprocessing confounds file will be "
-            "selected."
-        ),
-    )
-    g_param.add_argument(
         "--min_coverage",
         "--min-coverage",
         required=False,
@@ -245,161 +143,6 @@ def get_parser():
             "Any parcels with lower coverage than the threshold will be replaced with NaNs. "
             "Must be a value between zero and one, indicating proportion of the parcel. "
             "Default is 0.5."
-        ),
-    )
-    g_param.add_argument(
-        "--min_time",
-        "--min-time",
-        required=False,
-        default=100,
-        type=float,
-        help=(
-            "Post-scrubbing threshold to apply to individual runs in the dataset. "
-            "This threshold determines the minimum amount of time, in seconds, "
-            "needed to post-process a given run, once high-motion outlier volumes are removed. "
-            "This will have no impact if scrubbing is disabled "
-            "(i.e., if the FD threshold is zero or negative). "
-            "This parameter can be disabled by providing a zero or a negative value."
-        ),
-    )
-    g_param.add_argument(
-        "--dummy-scans",
-        "--dummy_scans",
-        dest="dummy_scans",
-        default=0,
-        type=_int_or_auto,
-        metavar="{{auto,INT}}",
-        help=(
-            "Number of volumes to remove from the beginning of each run. "
-            "If set to 'auto', xcp_d will extract non-steady-state volume indices from the "
-            "preprocessing derivatives' confounds file."
-        ),
-    )
-
-    g_filter = parser.add_argument_group("Filtering parameters")
-
-    g_filter.add_argument(
-        "--disable-bandpass-filter",
-        "--disable_bandpass_filter",
-        dest="bandpass_filter",
-        action="store_false",
-        help=(
-            "Disable bandpass filtering. "
-            "If bandpass filtering is disabled, then ALFF derivatives will not be calculated."
-        ),
-    )
-    g_filter.add_argument(
-        "--lower-bpf",
-        "--lower_bpf",
-        action="store",
-        default=0.01,
-        type=float,
-        help=(
-            "Lower cut-off frequency (Hz) for the Butterworth bandpass filter to be applied to "
-            "the denoised BOLD data. Set to 0.0 or negative to disable high-pass filtering. "
-            "See Satterthwaite et al. (2013)."
-        ),
-    )
-    g_filter.add_argument(
-        "--upper-bpf",
-        "--upper_bpf",
-        action="store",
-        default=0.08,
-        type=float,
-        help=(
-            "Upper cut-off frequency (Hz) for the Butterworth bandpass filter to be applied to "
-            "the denoised BOLD data. Set to 0.0 or negative to disable low-pass filtering. "
-            "See Satterthwaite et al. (2013)."
-        ),
-    )
-    g_filter.add_argument(
-        "--bpf-order",
-        "--bpf_order",
-        action="store",
-        default=2,
-        type=int,
-        help="Number of filter coefficients for the Butterworth bandpass filter.",
-    )
-    g_filter.add_argument(
-        "--motion-filter-type",
-        "--motion_filter_type",
-        action="store",
-        type=str,
-        default=None,
-        choices=["lp", "notch"],
-        help="""\
-Type of filter to use for removing respiratory artifact from motion regressors.
-If not set, no filter will be applied.
-
-If the filter type is set to "notch", then both ``band-stop-min`` and ``band-stop-max``
-must be defined.
-If the filter type is set to "lp", then only ``band-stop-min`` must be defined.
-""",
-    )
-    g_filter.add_argument(
-        "--band-stop-min",
-        "--band_stop_min",
-        default=None,
-        type=float,
-        metavar="BPM",
-        help="""\
-Lower frequency for the motion parameter filter, in breaths-per-minute (bpm).
-Motion filtering is only performed if ``motion-filter-type`` is not None.
-If used with the "lp" ``motion-filter-type``, this parameter essentially corresponds to a
-low-pass filter (the maximum allowed frequency in the filtered data).
-This parameter is used in conjunction with ``motion-filter-order`` and ``band-stop-max``.
-
-When ``motion-filter-type`` is set to "lp" (low-pass filter), another commonly-used value for
-this parameter is 6 BPM (equivalent to 0.1 Hertz), based on Gratton et al. (2020).
-""",
-    )
-    g_filter.add_argument(
-        "--band-stop-max",
-        "--band_stop_max",
-        default=None,
-        type=float,
-        metavar="BPM",
-        help="""\
-Upper frequency for the band-stop motion filter, in breaths-per-minute (bpm).
-Motion filtering is only performed if ``motion-filter-type`` is not None.
-This parameter is only used if ``motion-filter-type`` is set to "notch".
-This parameter is used in conjunction with ``motion-filter-order`` and ``band-stop-min``.
-""",
-    )
-    g_filter.add_argument(
-        "--motion-filter-order",
-        "--motion_filter_order",
-        default=4,
-        type=int,
-        help="Number of filter coeffecients for the motion parameter filter.",
-    )
-
-    g_censor = parser.add_argument_group("Censoring and scrubbing options")
-    g_censor.add_argument(
-        "-r",
-        "--head_radius",
-        "--head-radius",
-        default=50,
-        type=_float_or_auto,
-        help=(
-            "Head radius used to calculate framewise displacement, in mm. "
-            "The default value is 50 mm, which is recommended for adults. "
-            "For infants, we recommend a value of 35 mm. "
-            "A value of 'auto' is also supported, in which case the brain radius is "
-            "estimated from the preprocessed brain mask by treating the mask as a sphere."
-        ),
-    )
-    g_censor.add_argument(
-        "-f",
-        "--fd-thresh",
-        "--fd_thresh",
-        default=0.3,
-        type=float,
-        help=(
-            "Framewise displacement threshold for censoring. "
-            "Any volumes with an FD value greater than the threshold will be removed from the "
-            "denoised BOLD data. "
-            "A threshold of <=0 will disable censoring completely."
         ),
     )
 
