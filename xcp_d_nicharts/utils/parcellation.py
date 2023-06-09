@@ -8,6 +8,8 @@ from xcp_d.workflows.connectivity import (
 def parcellate_with_custom_atlases(xcpd_dir, atlas_paths):
     """Parcellate denoised XCP-D derivatives with custom atlases.
 
+    This is run on both UK Biobank data and data postprocessed with XCP-D.
+
     1.  Find the denoised BOLD files.
     2.  Find the atlases and associated label files.
     3.  Check that the atlases are in the same space as the BOLD files.
@@ -20,6 +22,8 @@ def parcellate_with_custom_atlases(xcpd_dir, atlas_paths):
 
 def parcellate_with_xcpd_atlases(bold_file):
     """Parcellate data with XCP-D's atlases.
+
+    This is run on UK Biobank data.
 
     1.  Load XCP-D's atlases.
     2.  Run the functional connectivity workflow to extract coverage, time series, and correlation

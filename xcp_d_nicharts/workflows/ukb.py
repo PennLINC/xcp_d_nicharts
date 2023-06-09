@@ -1,6 +1,6 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
-"""The primary workflows for xcp_d."""
+"""Workflows for postprocessing UK Biobank data."""
 import os
 import sys
 from copy import deepcopy
@@ -398,7 +398,13 @@ It is released under the [CC0](https://creativecommons.org/publicdomain/zero/1.0
 
     # Extract global signal from BOLD file
 
+    # Denoise BOLD file with global signal
+
+    # Run atlas-loading workflow
+
     # Run connectivity workflow
+
+    # Write out derivatives
 
     n_runs = len(preproc_files)
     for i_run, bold_file in enumerate(preproc_files):
