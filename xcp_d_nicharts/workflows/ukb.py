@@ -13,11 +13,10 @@ import numpy as np
 import scipy
 import templateflow
 from nipype import __version__ as nipype_ver
-from nipype import logging
+from nipype import Function, logging
 from nipype.interfaces import utility as niu
 from nipype.pipeline import engine as pe
 from niworkflows.engine.workflows import LiterateWorkflow as Workflow
-
 from xcp_d.__about__ import __version__
 from xcp_d.interfaces.bids import DerivativesDataSink
 from xcp_d.interfaces.report import AboutSummary, SubjectSummary
@@ -25,7 +24,6 @@ from xcp_d.utils.bids import (
     _get_tr,
     collect_data,
     collect_run_data,
-    collect_surface_data,
     get_entity,
     get_preproc_pipeline_info,
     group_across_runs,
@@ -34,13 +32,14 @@ from xcp_d.utils.bids import (
 from xcp_d.utils.doc import fill_doc
 from xcp_d.utils.modified_data import flag_bad_run
 from xcp_d.utils.utils import estimate_brain_radius
-from xcp_d.workflows.anatomical import (
-    init_postprocess_anat_wf,
-    init_postprocess_surfaces_wf,
+from xcp_d.workflows.connectivity import init_functional_connectivity_nifti_wf
+from xcp_d.workflows.postprocessing import init_denoise_bold_wf
+
+from xcp_d_nicharts.utils.ukb import (
+    collect_ukb_data,
+    collect_ukb_run_data,
+    create_confounds,
 )
-from xcp_d.workflows.bold import init_postprocess_nifti_wf
-from xcp_d.workflows.cifti import init_postprocess_cifti_wf
-from xcp_d.workflows.concatenation import init_concatenate_data_wf
 
 LOGGER = logging.getLogger("nipype.workflow")
 
@@ -288,9 +287,6 @@ def init_subject_wf(
         bids_filters=bids_filters,
         bids_validate=False,
     )
-
-    # determine the appropriate post-processing workflow
-    init_postprocess_bold_wf = init_postprocess_cifti_wf if cifti else init_postprocess_nifti_wf
     preproc_files = subj_data["bold"]
 
     inputnode = pe.Node(
@@ -396,25 +392,16 @@ It is released under the [CC0](https://creativecommons.org/publicdomain/zero/1.0
     # Extract target volumetric space for T1w image
     target_space = get_entity(subj_data["anat_to_template_xfm"], "to")
 
-    # Extract global signal from BOLD file
-
-    # Denoise BOLD file with global signal
-
     # Run atlas-loading workflow
 
-    # Run connectivity workflow
-
-    # Write out derivatives
-
-    n_runs = len(preproc_files)
+    # Process each run
     for i_run, bold_file in enumerate(preproc_files):
-        run_data = collect_run_data(fmri_dir, bold_file)
+        run_data = collect_ukb_run_data(fmri_dir, bold_file)
 
         postprocess_bold_wf = init_postprocess_ukbiobank_wf(
             bold_file=bold_file,
             output_dir=output_dir,
             run_data=run_data,
-            n_runs=n_runs,
             min_coverage=min_coverage,
             omp_nthreads=omp_nthreads,
             layout=layout,
@@ -437,5 +424,112 @@ It is released under the [CC0](https://creativecommons.org/publicdomain/zero/1.0
     for node in workflow.list_node_names():
         if node.split(".")[-1].startswith("ds_"):
             workflow.get_node(node).interface.out_path_base = "xcp_d"
+
+    return workflow
+
+
+def init_postprocess_ukbiobank_wf(
+    bold_file,
+    output_dir,
+    run_data,
+    min_coverage,
+    omp_nthreads,
+    layout,
+    name,
+):
+    """Postprocess UK Biobank BOLD data."""
+    workflow = Workflow(name=name)
+
+    TR = run_data["bold_metadata"]["RepetitionTime"]
+
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "bold_file",
+                "boldref",
+                "bold_mask",
+                "custom_confounds_file",
+                "template_to_anat_xfm",
+                "t1w",
+                "t2w",
+                "anat_dseg",
+                "anat_brainmask",
+                "atlas_names",
+                "atlas_files",
+                "atlas_labels_files",
+            ],
+        ),
+        name="inputnode",
+    )
+
+    inputnode.inputs.bold_file = bold_file
+    inputnode.inputs.boldref = run_data["boldref"]
+    inputnode.inputs.bold_mask = run_data["boldmask"]
+
+    create_confounds_node = pe.Node(
+        Function(
+            input_names=["bold_file", "mask_file"],
+            output_names=["confounds_file"],
+            function=create_confounds,
+        ),
+        name="create_confounds_node",
+    )
+
+    # fmt:off
+    workflow.connect([
+        (inputnode, create_confounds_node, [
+            ("bold_file", "bold_file"),
+            ("bold_mask", "mask_file"),
+        ]),
+    ])
+    # fmt:on
+
+    # NOTE: Do we need to calculate FD and censor?
+
+    # Denoise BOLD file with global signal
+    denoise_bold_wf = init_denoise_bold_wf(
+        TR=TR,
+        low_pass=0,
+        high_pass=0,
+        bpf_order=0,
+        bandpass_filter=False,
+        smoothing=0,
+        cifti=False,
+        mem_gb=1,
+        omp_nthreads=1,
+        name="denoise_bold_wf",
+    )
+    denoise_bold_wf.inputs.inputnode.preprocessed_bold = bold_file
+    denoise_bold_wf.inputs.inputnode.temporal_mask = temporal_mask
+    denoise_bold_wf.inputs.inputnode.mask = run_data["bold_brainmask"]
+    denoise_bold_wf.inputs.inputnode.confounds_file = confounds_file
+
+    # Run connectivity workflow
+    connectivity_wf = init_functional_connectivity_nifti_wf(
+        output_dir=output_dir,
+        alff_available=False,
+        min_coverage=min_coverage,
+        mem_gb=1,
+        name="connectivity_wf",
+    )
+
+    """name_source
+    denoised_bold
+    temporal_mask
+    alff
+    reho
+    atlas_names
+    atlas_files
+    atlas_labels_files"""
+
+    # fmt:off
+    workflow.connect([
+        (denoise_bold_wf, connectivity_wf, [
+            ("outputnode.censored_denoised_bold", "inputnode.denoised_bold"),
+        ]),
+    ])
+    # fmt:on
+
+    # Write out derivatives
 
     return workflow

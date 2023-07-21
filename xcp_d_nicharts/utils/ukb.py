@@ -18,6 +18,28 @@ def collect_ukb_data(ukb_dir, participant_label):
     return subj_data
 
 
+def create_confounds(bold_file, mask_file):
+    """Create global signal confounds file."""
+    import os
+
+    import pandas as pd
+    from xcp_d.utils.ingestion import extract_mean_signal
+
+    confounds_file = os.path.abspath("confounds.tsv")
+
+    # Extract global signal from BOLD file
+    mean_gs = extract_mean_signal(
+        mask=mask_file,
+        nifti=bold_file,
+        work_dir=os.getcwd(),
+    )
+
+    # Write out the confounds file
+    df = pd.DataFrame(columns=["global_signal"], data=mean_gs)
+    df.to_csv(confounds_file, sep="\t")
+    return confounds_file
+
+
 def global_signal_regression(bold_file, mask_file, out_file):
     """Perform global signal regression.
 
