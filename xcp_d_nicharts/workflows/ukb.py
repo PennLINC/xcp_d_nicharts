@@ -17,8 +17,11 @@ from nipype import Function, logging
 from nipype.interfaces import utility as niu
 from nipype.pipeline import engine as pe
 from niworkflows.engine.workflows import LiterateWorkflow as Workflow
+from niworkflows.interfaces.confounds import NormalizeMotionParams
+from niworkflows.interfaces.utility import AddTSVHeader
 from xcp_d.__about__ import __version__
 from xcp_d.interfaces.bids import DerivativesDataSink
+from xcp_d.interfaces.censoring import GenerateConfounds
 from xcp_d.interfaces.report import AboutSummary, SubjectSummary
 from xcp_d.utils.bids import (
     _get_tr,
@@ -465,10 +468,25 @@ def init_postprocess_ukbiobank_wf(
     inputnode.inputs.bold_file = bold_file
     inputnode.inputs.boldref = run_data["boldref"]
     inputnode.inputs.bold_mask = run_data["boldmask"]
+    inputnode.inputs.par_file = run_data["motion"]
+
+    normalize_motion = pe.Node(
+        NormalizeMotionParams(format="FSL"),
+        name="normalize_motion",
+    )
+    workflow.connect([(inputnode, normalize_motion, [("par_file", "in_file")])])
+
+    add_motion_headers = pe.Node(
+        AddTSVHeader(columns=["trans_x", "trans_y", "trans_z", "rot_x", "rot_y", "rot_z"]),
+        name="add_motion_headers",
+        mem_gb=0.01,
+        run_without_submitting=True,
+    )
+    workflow.connect([(normalize_motion, add_motion_headers, [("out_file", "in_file")])])
 
     create_confounds_node = pe.Node(
         Function(
-            input_names=["bold_file", "mask_file"],
+            input_names=["bold_file", "mask_file", "motion"],
             output_names=["confounds_file"],
             function=create_confounds,
         ),
@@ -481,10 +499,35 @@ def init_postprocess_ukbiobank_wf(
             ("bold_file", "bold_file"),
             ("bold_mask", "mask_file"),
         ]),
+        (add_motion_headers, create_confounds_node, [("out_file", "motion")]),
     ])
     # fmt:on
 
-    # NOTE: Do we need to calculate FD and censor?
+    # NOTE: Do we need to calculate FD and censor? Yes.
+    generate_confounds = pe.Node(
+        GenerateConfounds(
+            in_file="",
+            params="none",
+            TR=TR,
+            fd_thresh=fd_thresh,
+            head_radius=head_radius,
+            custom_confounds_file=None,
+            motion_filter_type="notch",
+            motion_filter_order=4,
+            band_stop_min=8,
+            band_stop_max=12,
+        ),
+        name="generate_confounds",
+    )
+
+    # fmt:off
+    workflow.connect([
+        (create_confounds_node, generate_confounds, [
+            ("confounds_file", "fmriprep_confounds_file"),
+            ("confounds_json", "fmriprep_confounds_json"),
+        ]),
+    ])
+    # fmt:on
 
     # Denoise BOLD file with global signal
     denoise_bold_wf = init_denoise_bold_wf(
@@ -500,9 +543,15 @@ def init_postprocess_ukbiobank_wf(
         name="denoise_bold_wf",
     )
     denoise_bold_wf.inputs.inputnode.preprocessed_bold = bold_file
-    denoise_bold_wf.inputs.inputnode.temporal_mask = temporal_mask
     denoise_bold_wf.inputs.inputnode.mask = run_data["bold_brainmask"]
-    denoise_bold_wf.inputs.inputnode.confounds_file = confounds_file
+
+    # fmt:off
+    workflow.connect([
+        # TODO: Only retain global signal in confounds file
+        (create_confounds_node, denoise_bold_wf, [("confounds_file", "inputnode.confounds_file")]),
+        (generate_confounds, denoise_bold_wf, [("temporal_mask", "inputnode.temporal_mask")]),
+    ])
+    # fmt:on
 
     # Run connectivity workflow
     connectivity_wf = init_functional_connectivity_nifti_wf(

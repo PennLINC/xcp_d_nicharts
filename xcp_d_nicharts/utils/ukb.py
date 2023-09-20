@@ -4,21 +4,30 @@ UK Biobank data are already denoised and in standard space,
 but we want to additionally run global signal regression on these data,
 before running XCP-D's parcellation code on them.
 """
+import os
+
 import numpy as np
 from nilearn import masking
 
 
-def collect_ukb_data(ukb_dir, participant_label):
+def collect_ukb_data(ukb_dir):
     """Collect necessary files from a UK Biobank dataset."""
     subj_data = {
-        "bold": "",
-        "t1w": "",
-        "confounds": "",
+        "bold": os.path.join(ukb_dir, "fMRI", "rfMRI.ica", "filtered_func_data_clean.nii.gz"),
+        "brainmask": os.path.join(ukb_dir, "fMRI", "rfMRI.ica", "mask.nii.gz"),
+        "t1w": os.path.join(ukb_dir, "T1", "T1_brain.nii.gz"),
+        "motion": os.path.join(
+            ukb_dir,
+            "fMRI",
+            "rfMRI.ica",
+            "mc",
+            "prefiltered_func_data_mcf.par",
+        ),
     }
     return subj_data
 
 
-def create_confounds(bold_file, mask_file):
+def create_confounds(bold_file, mask_file, motion):
     """Create global signal confounds file."""
     import os
 
@@ -34,9 +43,11 @@ def create_confounds(bold_file, mask_file):
         work_dir=os.getcwd(),
     )
 
+    motion_df = pd.read_table(motion)
+    motion_df["global_signal"] = mean_gs
+
     # Write out the confounds file
-    df = pd.DataFrame(columns=["global_signal"], data=mean_gs)
-    df.to_csv(confounds_file, sep="\t")
+    motion_df.to_csv(confounds_file, sep="\t")
     return confounds_file
 
 
