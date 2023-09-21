@@ -19,10 +19,10 @@ from xcp_d.workflows.connectivity import (
     init_load_atlases_wf,
 )
 from xcp_d.workflows.postprocessing import init_denoise_bold_wf
+from xcp_d.workflows.restingstate import init_alff_wf, init_reho_nifti_wf
 
 from xcp_d_nicharts.utils.ukb import (
     collect_ukb_data,
-    collect_ukb_run_data,
     create_motion_confounds,
     create_regression_confounds,
 )
@@ -267,52 +267,37 @@ def init_subject_wf(
     ----------
     .. footbibliography::
     """
+    name_source = (
+        f"/dset/sub-{subject_id}/func/"
+        f"sub-{subject_id}_task-rest_space-MNI152NLin6Asym_desc-preproc_bold.nii.gz"
+    )
+
     subj_data = collect_ukb_data(
         bids_dir=fmri_dir,
         participant_label=subject_id,
         bids_filters=bids_filters,
         bids_validate=False,
     )
-    preproc_files = subj_data["bold"]
 
     inputnode = pe.Node(
         niu.IdentityInterface(
             fields=[
-                "subj_data",  # not currently used, but will be in future
+                "name_source",
+                "bold_file",
                 "t1w",
-                "t2w",  # optional
-                "anat_brainmask",  # not used by cifti workflow
-                "anat_dseg",
-                "template_to_anat_xfm",  # not used by cifti workflow
-                "anat_to_template_xfm",
-                # mesh files
-                "lh_pial_surf",
-                "rh_pial_surf",
-                "lh_wm_surf",
-                "rh_wm_surf",
-                # shape files
-                "lh_sulcal_depth",
-                "rh_sulcal_depth",
-                "lh_sulcal_curv",
-                "rh_sulcal_curv",
-                "lh_cortical_thickness",
-                "rh_cortical_thickness",
+                "brainmask",
+                "motion",
             ],
         ),
         name="inputnode",
     )
-    inputnode.inputs.subj_data = subj_data
+    inputnode.inputs.name_source = name_source
+    inputnode.inputs.bold_file = subj_data["bold"]
     inputnode.inputs.t1w = subj_data["t1w"]
-    inputnode.inputs.t2w = subj_data["t2w"]
-    inputnode.inputs.anat_brainmask = subj_data["anat_brainmask"]
-    inputnode.inputs.anat_dseg = subj_data["anat_dseg"]
-    inputnode.inputs.template_to_anat_xfm = subj_data["template_to_anat_xfm"]
-    inputnode.inputs.anat_to_template_xfm = subj_data["anat_to_template_xfm"]
+    inputnode.inputs.brainmask = subj_data["brainmask"]
+    inputnode.inputs.motion = subj_data["motion"]
 
     workflow = Workflow(name=name)
-
-    # Extract target volumetric space for T1w image
-    name_source = f"sub-{subject_id}_task-rest_space-MNI152NLin6Asym_desc-preproc_bold.nii.gz"
 
     # Load the atlases, warping to the same space as the BOLD data if necessary.
     load_atlases_wf = init_load_atlases_wf(
@@ -322,28 +307,36 @@ def init_subject_wf(
         omp_nthreads=omp_nthreads,
         name="load_atlases_wf",
     )
-    load_atlases_wf.inputs.inputnode.name_source = name_source
-    load_atlases_wf.inputs.inputnode.bold_file = preproc_files[0]
 
-    # Process each run
-    for i_run, bold_file in enumerate(preproc_files):
-        run_data = collect_ukb_run_data(fmri_dir, bold_file)
+    # fmt:off
+    workflow.connect([
+        (inputnode, load_atlases_wf, [
+            ("name_source", "inputnode.name_source"),
+            ("bold_file", "inputnode.bold_file"),
+        ]),
+    ])
+    # fmt:on
 
-        postprocess_bold_wf = init_postprocess_ukbiobank_wf(
-            bold_file=bold_file,
-            output_dir=output_dir,
-            run_data=run_data,
-            min_coverage=min_coverage,
-            omp_nthreads=omp_nthreads,
-            layout=layout,
-            name=f"postprocess_ukbiobank_{i_run}_wf",
-        )
+    # Process the BOLD
+    postprocess_bold_wf = init_postprocess_ukbiobank_wf(
+        name_source=name_source,
+        output_dir=output_dir,
+        min_coverage=min_coverage,
+        t_r=2,  # TODO: REPLACE
+        fd_thresh=0.2,
+        name="postprocess_ukbiobank_wf",
+    )
 
-        # fmt:off
-        workflow.connect([
-            (inputnode, postprocess_bold_wf, [("bold_file", "inputnode.bold_file")]),
-        ])
-        # fmt:on
+    # fmt:off
+    workflow.connect([
+        (inputnode, postprocess_bold_wf, [("bold_file", "inputnode.bold_file")]),
+        (load_atlases_wf, postprocess_bold_wf, [
+            ("outputnode.atlas_names", "inputnode.atlas_names"),
+            ("outputnode.atlas_files", "inputnode.atlas_files"),
+            ("outputnode.atlas_labels_files", "inputnode.atlas_labels_files"),
+        ]),
+    ])
+    # fmt:on
 
     for node in workflow.list_node_names():
         if node.split(".")[-1].startswith("ds_"):
@@ -353,31 +346,24 @@ def init_subject_wf(
 
 
 def init_postprocess_ukbiobank_wf(
-    bold_file,
+    name_source,
     output_dir,
-    run_data,
     min_coverage,
+    t_r,
     fd_thresh,
-    head_radius,
     name,
 ):
     """Postprocess UK Biobank BOLD data."""
     workflow = Workflow(name=name)
 
-    t_r = run_data["bold_metadata"]["RepetitionTime"]
-
     inputnode = pe.Node(
         niu.IdentityInterface(
             fields=[
+                "name_source",
                 "bold_file",
-                "boldref",
-                "bold_mask",
-                "custom_confounds_file",
-                "template_to_anat_xfm",
                 "t1w",
-                "t2w",
-                "anat_dseg",
-                "anat_brainmask",
+                "brainmask",
+                "motion",
                 "atlas_names",
                 "atlas_files",
                 "atlas_labels_files",
@@ -386,11 +372,7 @@ def init_postprocess_ukbiobank_wf(
         name="inputnode",
     )
 
-    inputnode.inputs.bold_file = bold_file
-    inputnode.inputs.boldref = run_data["boldref"]
-    inputnode.inputs.bold_mask = run_data["boldmask"]
-    inputnode.inputs.par_file = run_data["motion"]
-
+    # Prepare motion parameters to produce temporal mask from filtered motion.
     normalize_motion = pe.Node(
         NormalizeMotionParams(format="FSL"),
         name="normalize_motion",
@@ -420,15 +402,27 @@ def init_postprocess_ukbiobank_wf(
     ])
     # fmt:on
 
-    # NOTE: Do we need to calculate FD and censor? Yes.
-    # temporal_mask
+    get_brain_radius = pe.Node(
+        Function(
+            input_names=["mask_file"],
+            output_names=["head_radius"],
+            function=estimate_brain_radius,
+        ),
+        name="get_brain_radius",
+    )
+
+    # fmt:off
+    workflow.connect([
+        (inputnode, get_brain_radius, [("brainmask", "mask_file")]),
+    ])
+    # fmt:on
+
     flag_motion_outliers = pe.Node(
         GenerateConfounds(
             in_file="",
             params="none",
             TR=t_r,
             fd_thresh=fd_thresh,
-            head_radius=head_radius,
             custom_confounds_file=None,
             motion_filter_type="notch",
             motion_filter_order=4,
@@ -444,6 +438,7 @@ def init_postprocess_ukbiobank_wf(
             ("confounds_file", "fmriprep_confounds_file"),
             ("confounds_json", "fmriprep_confounds_json"),
         ]),
+        (get_brain_radius, flag_motion_outliers, [("brain_radius", "head_radius")]),
     ])
     # fmt:on
 
@@ -460,7 +455,7 @@ def init_postprocess_ukbiobank_wf(
     workflow.connect([
         (inputnode, make_regression_confounds, [
             ("bold_file", "bold_file"),
-            ("bold_mask", "mask_file"),
+            ("brainmask", "mask_file"),
         ]),
     ])
     # fmt:on
@@ -478,11 +473,13 @@ def init_postprocess_ukbiobank_wf(
         omp_nthreads=1,
         name="denoise_bold_wf",
     )
-    denoise_bold_wf.inputs.inputnode.preprocessed_bold = bold_file
-    denoise_bold_wf.inputs.inputnode.mask = run_data["bold_brainmask"]
 
     # fmt:off
     workflow.connect([
+        (inputnode, denoise_bold_wf, [
+            ("bold_file", "inputnode.preprocessed_bold"),
+            ("brainmask", "inputnode.mask"),
+        ]),
         (make_regression_confounds, denoise_bold_wf, [
             ("confounds_file", "inputnode.confounds_file"),
         ]),
@@ -490,30 +487,65 @@ def init_postprocess_ukbiobank_wf(
     ])
     # fmt:on
 
+    # Calculate ALFF and ReHo
+    alff_wf = init_alff_wf(
+        name_source=name_source,
+        output_dir=output_dir,
+        TR=t_r,
+        low_pass=low_pass,
+        high_pass=high_pass,
+        smoothing=smoothing,
+        cifti=False,
+        name="alff_wf",
+    )
+
+    # fmt:off
+    workflow.connect([
+        (inputnode, alff_wf, [("brainmask", "inputnode.bold_mask")]),
+        (denoise_bold_wf, alff_wf, [
+            ("outputnode.censored_denoised_bold", "inputnode.denoised_bold"),
+        ]),
+    ])
+    # fmt:on
+
+    reho_wf = init_reho_nifti_wf(
+        name_source=name_source,
+        output_dir=output_dir,
+        name="reho_wf",
+    )
+
+    # fmt:off
+    workflow.connect([
+        (inputnode, reho_wf, [("brainmask", "inputnode.bold_mask")]),
+        (denoise_bold_wf, reho_wf, [
+            ("outputnode.censored_denoised_bold", "inputnode.denoised_bold"),
+        ]),
+    ])
+    # fmt:on
+
     # Run connectivity workflow
     connectivity_wf = init_functional_connectivity_nifti_wf(
         output_dir=output_dir,
-        alff_available=False,
+        alff_available=True,
         min_coverage=min_coverage,
         mem_gb=1,
         name="connectivity_wf",
     )
 
-    """name_source
-    denoised_bold
-    temporal_mask
-    alff
-    reho
-    atlas_names
-    atlas_files
-    atlas_labels_files"""
-
     # fmt:off
     workflow.connect([
+        (inputnode, connectivity_wf, [
+            ("name_source", "inputnode.name_source"),
+            ("atlas_names", "inputnode.atlas_names"),
+            ("atlas_files", "inputnode.atlas_files"),
+            ("atlas_labels_files", "inputnode.atlas_labels_files"),
+        ]),
         (denoise_bold_wf, connectivity_wf, [
             ("outputnode.censored_denoised_bold", "inputnode.denoised_bold"),
         ]),
         (flag_motion_outliers, connectivity_wf, [("temporal_mask", "inputnode.temporal_mask")]),
+        (alff_wf, connectivity_wf, [("outputnode.alff", "inputnode.alff")]),
+        (reho_wf, connectivity_wf, [("outputnode.reho", "inputnode.reho")]),
     ])
     # fmt:on
 
