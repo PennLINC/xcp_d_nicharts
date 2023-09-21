@@ -27,7 +27,7 @@ def collect_ukb_data(ukb_dir):
     return subj_data
 
 
-def create_confounds(bold_file, mask_file, motion):
+def create_regression_confounds(bold_file, mask_file):
     """Create global signal confounds file."""
     import os
 
@@ -43,12 +43,43 @@ def create_confounds(bold_file, mask_file, motion):
         work_dir=os.getcwd(),
     )
 
-    motion_df = pd.read_table(motion)
-    motion_df["global_signal"] = mean_gs
+    confounds_df = pd.DataFrame(columns=["global_signal"], data=mean_gs)
 
     # Write out the confounds file
-    motion_df.to_csv(confounds_file, sep="\t")
+    confounds_df.to_csv(confounds_file, sep="\t", index=False)
     return confounds_file
+
+
+def create_motion_confounds(motion):
+    """Create motion confounds file."""
+    import json
+    import os
+
+    import pandas as pd
+
+    confounds_file = os.path.abspath("motion.tsv")
+    confounds_json = os.path.abspath("motion.json")
+
+    motion_confounds_df = pd.read_table(motion)
+    columns = motion_confounds_df.columns.tolist()
+    for col in columns:
+        new_col = f"{col}_derivative1"
+        motion_confounds_df[new_col] = motion_confounds_df[col].diff()
+
+    columns = motion_confounds_df.columns.tolist()
+    for col in columns:
+        new_col = f"{col}_power2"
+        motion_confounds_df[new_col] = motion_confounds_df[col] ** 2
+
+    # Add empty FD column
+    motion_confounds_df["framewise_displacement"] = 0
+    confounds_dict = {col: {"Description": ""} for col in motion_confounds_df.columns}
+
+    motion_confounds_df.to_csv(confounds_file, sep="\t", index=False)
+    with open(confounds_json, "w") as fo:
+        json.dump(confounds_dict, fo)
+
+    return confounds_file, confounds_json
 
 
 def global_signal_regression(bold_file, mask_file, out_file):
