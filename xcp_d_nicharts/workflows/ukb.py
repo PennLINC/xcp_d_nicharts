@@ -10,6 +10,7 @@ from nipype.pipeline import engine as pe
 from niworkflows.engine.workflows import LiterateWorkflow as Workflow
 from niworkflows.interfaces.confounds import NormalizeMotionParams
 from niworkflows.interfaces.utility import AddTSVHeader
+from xcp_d.interfaces.bids import DerivativesDataSink
 from xcp_d.interfaces.censoring import GenerateConfounds
 from xcp_d.utils.bids import write_dataset_description
 from xcp_d.utils.doc import fill_doc
@@ -18,7 +19,7 @@ from xcp_d.workflows.connectivity import (
     init_functional_connectivity_nifti_wf,
     init_load_atlases_wf,
 )
-from xcp_d.workflows.postprocessing import init_denoise_bold_wf
+from xcp_d.workflows.postprocessing import init_denoise_bold_wf, init_despike_wf
 from xcp_d.workflows.restingstate import init_alff_wf, init_reho_nifti_wf
 
 from xcp_d_nicharts.utils.ukb import (
@@ -37,109 +38,42 @@ def init_xcpd_ukb_wf(
     work_dir,
     subject_list,
     analysis_level,
-    bids_filters,
     omp_nthreads,
-    layout=None,
+    motion_filter_type,
+    motion_filter_order,
+    band_stop_min,
+    band_stop_max,
+    despike,
     min_coverage=0.5,
+    fd_thresh=0.2,
+    low_pass=0,
+    high_pass=0,
+    smoothing=False,
     name="xcpd_ukb_wf",
 ):
     """Build and organize execution of xcp_d pipeline.
 
     It also connects the subworkflows under the xcp_d workflow.
 
-    Workflow Graph
-        .. workflow::
-            :graph2use: orig
-            :simple_form: yes
-
-            import os
-            import tempfile
-
-            from xcp_d.workflows.base import init_xcpd_wf
-            from xcp_d.utils.doc import download_example_data
-
-            fmri_dir = download_example_data()
-            out_dir = tempfile.mkdtemp()
-
-            # Create xcp_d derivatives folder.
-            os.mkdir(os.path.join(out_dir, "xcp_d"))
-
-            wf = init_xcpd_wf(
-                fmri_dir=fmri_dir,
-                output_dir=out_dir,
-                work_dir=".",
-                subject_list=["01"],
-                analysis_level="participant",
-                task_id="imagery",
-                bids_filters=None,
-                bandpass_filter=True,
-                high_pass=0.01,
-                low_pass=0.08,
-                bpf_order=2,
-                fd_thresh=0.3,
-                motion_filter_type=None,
-                motion_filter_order=4,
-                band_stop_min=12,
-                band_stop_max=20,
-                despike=True,
-                head_radius=50.,
-                params="36P",
-                smoothing=6,
-                custom_confounds_folder=None,
-                dummy_scans=0,
-                cifti=False,
-                omp_nthreads=1,
-                layout=None,
-                process_surfaces=False,
-                dcan_qc=False,
-                input_type="fmriprep",
-                min_coverage=0.5,
-                min_time=100,
-                combineruns=False,
-                name="xcpd_wf",
-            )
-
     Parameters
     ----------
-    %(layout)s
-    %(bandpass_filter)s
-    %(high_pass)s
-    %(low_pass)s
-    %(despike)s
-    %(bpf_order)s
-    %(analysis_level)s
-    %(motion_filter_type)s
-    %(motion_filter_order)s
-    %(band_stop_min)s
-    %(band_stop_max)s
-    %(omp_nthreads)s
-    %(cifti)s
-    task_id : :obj:`str` or None
-        Task ID of BOLD  series to be selected for postprocess , or ``None`` to postprocess all
-    bids_filters : dict or None
-    %(output_dir)s
-    %(fd_thresh)s
-    run_uuid : :obj:`str`
-        Unique identifier for execution instance
-    subject_list : list
-        List of subject labels
-    %(work_dir)s
-    %(head_radius)s
-    %(params)s
-    %(smoothing)s
-    %(custom_confounds_folder)s
-    %(dummy_scans)s
-    %(process_surfaces)s
-    %(dcan_qc)s
-    %(input_type)s
-    %(min_coverage)s
-    %(min_time)s
-    combineruns
-    %(name)s
-
-    References
-    ----------
-    .. footbibliography::
+    fmri_dir
+    output_dir
+    work_dir
+    subject_list
+    analysis_level
+    omp_nthreads
+    motion_filter_type
+    motion_filter_order
+    band_stop_min
+    band_stop_max
+    despike
+    min_coverage
+    fd_thresh
+    low_pass
+    high_pass
+    smoothing
+    name
     """
     xcpd_wf = Workflow(name="xcpd_wf")
     xcpd_wf.base_dir = work_dir
@@ -149,13 +83,20 @@ def init_xcpd_ukb_wf(
 
     for subject_id in subject_list:
         single_subj_wf = init_subject_wf(
-            layout=layout,
             fmri_dir=fmri_dir,
-            omp_nthreads=omp_nthreads,
             subject_id=subject_id,
-            bids_filters=bids_filters,
             output_dir=output_dir,
+            motion_filter_type=motion_filter_type,
+            motion_filter_order=motion_filter_order,
+            band_stop_min=band_stop_min,
+            band_stop_max=band_stop_max,
+            despike=despike,
             min_coverage=min_coverage,
+            fd_thresh=fd_thresh,
+            low_pass=low_pass,
+            high_pass=high_pass,
+            smoothing=smoothing,
+            omp_nthreads=omp_nthreads,
             name=f"single_subject_{subject_id}_wf",
         )
 
@@ -173,111 +114,52 @@ def init_xcpd_ukb_wf(
     return xcpd_wf
 
 
-@fill_doc
 def init_subject_wf(
     fmri_dir,
     subject_id,
-    bids_filters,
     output_dir,
+    motion_filter_type,
+    motion_filter_order,
+    band_stop_min,
+    band_stop_max,
+    despike,
     min_coverage,
+    fd_thresh,
+    low_pass,
+    high_pass,
+    smoothing,
     omp_nthreads,
-    layout,
     name,
 ):
     """Organize the postprocessing pipeline for a single subject.
 
-    Workflow Graph
-        .. workflow::
-            :graph2use: orig
-            :simple_form: yes
-
-            from xcp_d.workflows.base import init_subject_wf
-            from xcp_d.utils.doc import download_example_data
-
-            fmri_dir = download_example_data()
-
-            wf = init_subject_wf(
-                fmri_dir=fmri_dir,
-                subject_id="01",
-                input_type="fmriprep",
-                process_surfaces=False,
-                combineruns=False,
-                cifti=False,
-                task_id="imagery",
-                bids_filters=None,
-                bandpass_filter=True,
-                high_pass=0.01,
-                low_pass=0.08,
-                bpf_order=2,
-                motion_filter_type=None,
-                motion_filter_order=4,
-                band_stop_min=12,
-                band_stop_max=20,
-                smoothing=6.,
-                head_radius=50,
-                params="36P",
-                output_dir=".",
-                custom_confounds_folder=None,
-                dummy_scans=0,
-                fd_thresh=0.3,
-                despike=True,
-                dcan_qc=False,
-                min_coverage=0.5,
-                min_time=100,
-                omp_nthreads=1,
-                layout=None,
-                name="single_subject_sub-01_wf",
-            )
-
     Parameters
     ----------
-    %(fmri_dir)s
-    %(subject_id)s
-    %(input_type)s
-    %(process_surfaces)s
-    combineruns
-    %(cifti)s
-    task_id : :obj:`str` or None
-        Task ID of BOLD  series to be selected for postprocess , or ``None`` to postprocess all
-    bids_filters : dict or None
-    %(bandpass_filter)s
-    %(high_pass)s
-    %(low_pass)s
-    %(bpf_order)s
-    %(motion_filter_type)s
-    %(motion_filter_order)s
-    %(band_stop_min)s
-    %(band_stop_max)s
-    %(smoothing)s
-    %(head_radius)s
-    %(params)s
-    %(output_dir)s
-    %(custom_confounds_folder)s
-    %(dummy_scans)s
-    %(fd_thresh)s
-    %(despike)s
-    %(dcan_qc)s
-    %(min_coverage)s
-    %(min_time)s
-    %(omp_nthreads)s
-    %(layout)s
-    %(name)s
-
-    References
-    ----------
-    .. footbibliography::
+    fmri_dir
+    subject_id
+    output_dir
+    motion_filter_type
+    motion_filter_order
+    band_stop_min
+    band_stop_max
+    despike
+    min_coverage
+    fd_thresh
+    low_pass
+    high_pass
+    smoothing
+    omp_nthreads
+    name
     """
     name_source = (
         f"/dset/sub-{subject_id}/func/"
         f"sub-{subject_id}_task-rest_space-MNI152NLin6Asym_desc-preproc_bold.nii.gz"
     )
+    t_r = 0.8  # TODO: FIND CORRECT TR
 
-    subj_data = collect_ukb_data(
-        bids_dir=fmri_dir,
-        participant_label=subject_id,
-        bids_filters=bids_filters,
-        bids_validate=False,
-    )
+    workflow = Workflow(name=name)
+
+    subj_data = collect_ukb_data(ukb_dir=os.path.join(fmri_dir, subject_id))
 
     inputnode = pe.Node(
         niu.IdentityInterface(
@@ -286,7 +168,7 @@ def init_subject_wf(
                 "bold_file",
                 "t1w",
                 "brainmask",
-                "motion",
+                "par_file",
             ],
         ),
         name="inputnode",
@@ -295,9 +177,7 @@ def init_subject_wf(
     inputnode.inputs.bold_file = subj_data["bold"]
     inputnode.inputs.t1w = subj_data["t1w"]
     inputnode.inputs.brainmask = subj_data["brainmask"]
-    inputnode.inputs.motion = subj_data["motion"]
-
-    workflow = Workflow(name=name)
+    inputnode.inputs.par_file = subj_data["motion"]
 
     # Load the atlases, warping to the same space as the BOLD data if necessary.
     load_atlases_wf = init_load_atlases_wf(
@@ -316,61 +196,6 @@ def init_subject_wf(
         ]),
     ])
     # fmt:on
-
-    # Process the BOLD
-    postprocess_bold_wf = init_postprocess_ukbiobank_wf(
-        name_source=name_source,
-        output_dir=output_dir,
-        min_coverage=min_coverage,
-        t_r=2,  # TODO: REPLACE
-        fd_thresh=0.2,
-        name="postprocess_ukbiobank_wf",
-    )
-
-    # fmt:off
-    workflow.connect([
-        (inputnode, postprocess_bold_wf, [("bold_file", "inputnode.bold_file")]),
-        (load_atlases_wf, postprocess_bold_wf, [
-            ("outputnode.atlas_names", "inputnode.atlas_names"),
-            ("outputnode.atlas_files", "inputnode.atlas_files"),
-            ("outputnode.atlas_labels_files", "inputnode.atlas_labels_files"),
-        ]),
-    ])
-    # fmt:on
-
-    for node in workflow.list_node_names():
-        if node.split(".")[-1].startswith("ds_"):
-            workflow.get_node(node).interface.out_path_base = "xcp_d"
-
-    return workflow
-
-
-def init_postprocess_ukbiobank_wf(
-    name_source,
-    output_dir,
-    min_coverage,
-    t_r,
-    fd_thresh,
-    name,
-):
-    """Postprocess UK Biobank BOLD data."""
-    workflow = Workflow(name=name)
-
-    inputnode = pe.Node(
-        niu.IdentityInterface(
-            fields=[
-                "name_source",
-                "bold_file",
-                "t1w",
-                "brainmask",
-                "motion",
-                "atlas_names",
-                "atlas_files",
-                "atlas_labels_files",
-            ],
-        ),
-        name="inputnode",
-    )
 
     # Prepare motion parameters to produce temporal mask from filtered motion.
     normalize_motion = pe.Node(
@@ -395,12 +220,7 @@ def init_postprocess_ukbiobank_wf(
         ),
         name="make_motion_confounds",
     )
-
-    # fmt:off
-    workflow.connect([
-        (add_motion_headers, make_motion_confounds, [("out_file", "motion")]),
-    ])
-    # fmt:on
+    workflow.connect([(add_motion_headers, make_motion_confounds, [("out_file", "motion")])])
 
     get_brain_radius = pe.Node(
         Function(
@@ -410,12 +230,7 @@ def init_postprocess_ukbiobank_wf(
         ),
         name="get_brain_radius",
     )
-
-    # fmt:off
-    workflow.connect([
-        (inputnode, get_brain_radius, [("brainmask", "mask_file")]),
-    ])
-    # fmt:on
+    workflow.connect([(inputnode, get_brain_radius, [("brainmask", "mask_file")])])
 
     flag_motion_outliers = pe.Node(
         GenerateConfounds(
@@ -424,10 +239,10 @@ def init_postprocess_ukbiobank_wf(
             TR=t_r,
             fd_thresh=fd_thresh,
             custom_confounds_file=None,
-            motion_filter_type="notch",
-            motion_filter_order=4,
-            band_stop_min=8,
-            band_stop_max=12,
+            motion_filter_type=motion_filter_type,
+            motion_filter_order=motion_filter_order,
+            band_stop_min=band_stop_min,
+            band_stop_max=band_stop_max,
         ),
         name="flag_motion_outliers",
     )
@@ -463,23 +278,44 @@ def init_postprocess_ukbiobank_wf(
     # Denoise BOLD file with global signal
     denoise_bold_wf = init_denoise_bold_wf(
         TR=t_r,
-        low_pass=0,
-        high_pass=0,
-        bpf_order=0,
-        bandpass_filter=False,
-        smoothing=0,
+        low_pass=low_pass,
+        high_pass=high_pass,
+        bpf_order=0,  # TODO: FIX
+        bandpass_filter=False,  # TODO: FIX
+        smoothing=smoothing,
         cifti=False,
         mem_gb=1,
         omp_nthreads=1,
         name="denoise_bold_wf",
     )
 
+    if despike:
+        despike_wf = init_despike_wf(
+            TR=t_r,
+            cifti=False,
+            omp_nthreads=omp_nthreads,
+            name="despike_wf",
+        )
+
+        # fmt:off
+        workflow.connect([
+            (inputnode, despike_wf, [("bold_file", "inputnode.bold_file")]),
+            (despike_wf, denoise_bold_wf, [
+                ("outputnode.bold_file", "inputnode.preprocessed_bold"),
+            ]),
+        ])
+        # fmt:on
+
+    else:
+        # fmt:off
+        workflow.connect([
+            (inputnode, denoise_bold_wf, [("bold_file", "inputnode.preprocessed_bold")]),
+        ])
+        # fmt:on
+
     # fmt:off
     workflow.connect([
-        (inputnode, denoise_bold_wf, [
-            ("bold_file", "inputnode.preprocessed_bold"),
-            ("brainmask", "inputnode.mask"),
-        ]),
+        (inputnode, denoise_bold_wf, [("brainmask", "inputnode.mask")]),
         (make_regression_confounds, denoise_bold_wf, [
             ("confounds_file", "inputnode.confounds_file"),
         ]),
@@ -536,9 +372,11 @@ def init_postprocess_ukbiobank_wf(
     workflow.connect([
         (inputnode, connectivity_wf, [
             ("name_source", "inputnode.name_source"),
-            ("atlas_names", "inputnode.atlas_names"),
-            ("atlas_files", "inputnode.atlas_files"),
-            ("atlas_labels_files", "inputnode.atlas_labels_files"),
+        ]),
+        (load_atlases_wf, connectivity_wf, [
+            ("outputnode.atlas_names", "inputnode.atlas_names"),
+            ("outputnode.atlas_files", "inputnode.atlas_files"),
+            ("outputnode.atlas_labels_files", "inputnode.atlas_labels_files"),
         ]),
         (denoise_bold_wf, connectivity_wf, [
             ("outputnode.censored_denoised_bold", "inputnode.denoised_bold"),
@@ -550,5 +388,154 @@ def init_postprocess_ukbiobank_wf(
     # fmt:on
 
     # Write out derivatives
+    ds_temporal_mask = pe.Node(
+        DerivativesDataSink(
+            base_directory=output_dir,
+            dismiss_entities=["atlas", "den", "res", "space", "cohort", "desc"],
+            suffix="outliers",
+            extension=".tsv",
+            source_file=name_source,
+        ),
+        name="ds_temporal_mask",
+        run_without_submitting=True,
+        mem_gb=1,
+    )
+
+    # fmt:off
+    workflow.connect([
+        (flag_motion_outliers, ds_temporal_mask, [
+            ("temporal_mask_metadata", "meta_dict"),
+            ("temporal_mask", "in_file"),
+        ]),
+    ])
+    # fmt:on
+
+    ds_filtered_motion = pe.Node(
+        DerivativesDataSink(
+            base_directory=output_dir,
+            source_file=name_source,
+            dismiss_entities=["atlas", "den", "res", "space", "cohort", "desc"],
+            desc="filtered" if motion_filter_type else None,
+            suffix="motion",
+            extension=".tsv",
+        ),
+        name="ds_filtered_motion",
+        run_without_submitting=True,
+        mem_gb=1,
+    )
+
+    # fmt:off
+    workflow.connect([
+        (flag_motion_outliers, ds_filtered_motion, [
+            ("motion_metadata", "meta_dict"),
+            ("filtered_motion", "in_file"),
+        ]),
+    ])
+    # fmt:on
+
+    ds_coverage_files = pe.MapNode(
+        DerivativesDataSink(
+            base_directory=output_dir,
+            source_file=name_source,
+            dismiss_entities=["desc"],
+            suffix="coverage",
+            extension=".tsv",
+        ),
+        name="ds_coverage_files",
+        run_without_submitting=True,
+        mem_gb=1,
+        iterfield=["atlas", "in_file"],
+    )
+    ds_timeseries = pe.MapNode(
+        DerivativesDataSink(
+            base_directory=output_dir,
+            source_file=name_source,
+            dismiss_entities=["desc"],
+            suffix="timeseries",
+            extension=".tsv",
+        ),
+        name="ds_timeseries",
+        run_without_submitting=True,
+        mem_gb=1,
+        iterfield=["atlas", "in_file"],
+    )
+    ds_correlations = pe.MapNode(
+        DerivativesDataSink(
+            base_directory=output_dir,
+            source_file=name_source,
+            dismiss_entities=["desc"],
+            measure="pearsoncorrelation",
+            suffix="conmat",
+            extension=".tsv",
+        ),
+        name="ds_correlations",
+        run_without_submitting=True,
+        mem_gb=1,
+        iterfield=["atlas", "in_file"],
+    )
+    ds_parcellated_reho = pe.MapNode(
+        DerivativesDataSink(
+            base_directory=output_dir,
+            source_file=name_source,
+            dismiss_entities=["desc"],
+            suffix="reho",
+            extension=".tsv",
+        ),
+        name="ds_parcellated_reho",
+        run_without_submitting=True,
+        mem_gb=1,
+        iterfield=["atlas", "in_file"],
+    )
+
+    # fmt:off
+    workflow.connect([
+        (load_atlases_wf, ds_coverage_files, [("outputnode.atlas_names", "atlas")]),
+        (connectivity_wf, ds_coverage_files, [("coverage", "in_file")]),
+        (load_atlases_wf, ds_timeseries, [("outputnode.atlas_names", "atlas")]),
+        (connectivity_wf, ds_timeseries, [("timeseries", "in_file")]),
+        (load_atlases_wf, ds_correlations, [("outputnode.atlas_names", "atlas")]),
+        (connectivity_wf, ds_correlations, [("correlations", "in_file")]),
+        (load_atlases_wf, ds_parcellated_reho, [("outputnode.atlas_names", "atlas")]),
+        (connectivity_wf, ds_parcellated_reho, [("parcellated_reho", "in_file")]),
+    ])
+    # fmt:on
+
+    ds_denoised_bold = pe.Node(
+        DerivativesDataSink(
+            base_directory=output_dir,
+            source_file=name_source,
+            desc="denoised",
+            extension=".nii.gz",
+            compression=True,
+        ),
+        name="ds_denoised_bold",
+        run_without_submitting=True,
+        mem_gb=2,
+    )
+
+    ds_reho = pe.Node(
+        DerivativesDataSink(
+            base_directory=output_dir,
+            source_file=name_source,
+            dismiss_entities=["desc"],
+            suffix="reho",
+            extension=".nii.gz",
+            compression=True,
+        ),
+        name="ds_reho",
+        run_without_submitting=True,
+        mem_gb=1,
+    )
+
+    # fmt:off
+    workflow.connect([
+        (denoise_bold_wf, ds_denoised_bold, [("outputnode.censored_denoised_bold", "in_file")]),
+        (reho_wf, ds_reho, [("outputnode.reho", "in_file")]),
+    ])
+    # fmt:on
+
+    for node in workflow.list_node_names():
+        if node.split(".")[-1].startswith("ds_"):
+            workflow.get_node(node).interface.out_path_base = "xcp_d"
 
     return workflow
