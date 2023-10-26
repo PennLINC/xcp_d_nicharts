@@ -44,11 +44,12 @@ def init_xcpd_ukb_wf(
     band_stop_min,
     band_stop_max,
     despike,
-    min_coverage=0.5,
-    fd_thresh=0.2,
-    low_pass=0,
-    high_pass=0,
-    smoothing=False,
+    min_coverage,
+    fd_thresh,
+    low_pass,
+    high_pass,
+    bpf_order,
+    smoothing,
     name="xcpd_ukb_wf",
 ):
     """Build and organize execution of xcp_d pipeline.
@@ -95,6 +96,7 @@ def init_xcpd_ukb_wf(
             fd_thresh=fd_thresh,
             low_pass=low_pass,
             high_pass=high_pass,
+            bpf_order=bpf_order,
             smoothing=smoothing,
             omp_nthreads=omp_nthreads,
             name=f"single_subject_{subject_id}_wf",
@@ -127,6 +129,7 @@ def init_subject_wf(
     fd_thresh,
     low_pass,
     high_pass,
+    bpf_order,
     smoothing,
     omp_nthreads,
     name,
@@ -147,6 +150,7 @@ def init_subject_wf(
     fd_thresh
     low_pass
     high_pass
+    bpf_order
     smoothing
     omp_nthreads
     name
@@ -280,8 +284,8 @@ def init_subject_wf(
         TR=t_r,
         low_pass=low_pass,
         high_pass=high_pass,
-        bpf_order=2,
-        bandpass_filter=True,
+        bpf_order=bpf_order,
+        bandpass_filter=((low_pass != 0) or (high_pass != 0)),
         smoothing=smoothing,
         cifti=False,
         mem_gb=1,

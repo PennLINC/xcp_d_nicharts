@@ -9,8 +9,6 @@ from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from pathlib import Path
 from time import strftime
 
-from niworkflows import NIWORKFLOWS_LOG
-
 from xcp_d.cli.parser_utils import _float_or_auto, _restricted_float, check_deps
 
 warnings.filterwarnings("ignore")
@@ -137,6 +135,12 @@ def get_parser():
             "data. "
             "This may be set to 0."
         ),
+    )
+    g_param.add_argument(
+        "--despike",
+        action="store_true",
+        default=False,
+        help="Despike the BOLD data before postprocessing.",
     )
     g_param.add_argument(
         "-p",
@@ -513,13 +517,11 @@ def build_workflow(opts, retval):
     ``multiprocessing.Process`` that allows fmriprep to enforce
     a hard-limited memory-scope.
     """
-    from bids import BIDSLayout
     from nipype import config as ncfg
     from nipype import logging as nlogging
-
     from xcp_d.__about__ import __version__
-    from xcp_d.utils.bids import collect_participants
 
+    from xcp_d_nicharts.utils.ukb import collect_participants
     from xcp_d_nicharts.workflows.ukb import init_xcpd_ukb_wf
 
     log_level = int(max(25 - 5 * opts.verbose_count, logging.DEBUG))
@@ -648,8 +650,7 @@ def build_workflow(opts, retval):
     run_uuid = f"{strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4()}"
     retval["run_uuid"] = run_uuid
 
-    layout = BIDSLayout(str(fmri_dir), validate=False, derivatives=True)
-    subject_list = collect_participants(layout, participant_label=opts.participant_label)
+    subject_list = collect_participants(str(fmri_dir), participant_label=opts.participant_label)
     retval["subject_list"] = subject_list
 
     # Load base plugin_settings from file if --use-plugin
@@ -745,7 +746,6 @@ Running xcp_d version {__version__}:
     )
 
     retval["workflow"] = init_xcpd_ukb_wf(
-        layout=layout,
         omp_nthreads=omp_nthreads,
         fmri_dir=str(fmri_dir),
         high_pass=opts.lower_bpf,
@@ -764,7 +764,6 @@ Running xcp_d version {__version__}:
         analysis_level=opts.analysis_level,
         output_dir=str(output_dir),
         head_radius=opts.head_radius,
-        dummy_scans=opts.dummy_scans,
         fd_thresh=opts.fd_thresh,
         input_type=opts.input_type,
         min_coverage=opts.min_coverage,

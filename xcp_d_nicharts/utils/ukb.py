@@ -10,6 +10,52 @@ import numpy as np
 from nilearn import masking
 
 
+def collect_participants(dset_dir, participant_label=None):
+    """Collect list of participants."""
+    import os
+    from glob import glob
+
+    subfolders = sorted(glob(os.path.join(dset_dir, "*_*")))
+    subfolders = [f for f in subfolders if os.path.isdir(f)]
+    print(subfolders)
+    subsubfolders = [
+        [os.path.basename(sf) for sf in sorted(glob(os.path.join(f, "*")))] for f in subfolders
+    ]
+    print(subsubfolders)
+    ukb_subfolders = [
+        f
+        for i, f in enumerate(subfolders)
+        if ("T1" in subsubfolders[i]) and ("fMRI" in subsubfolders[i])
+    ]
+    print(ukb_subfolders)
+    all_participants = [os.path.basename(f).split("_")[0] for f in ukb_subfolders]
+    assert len(set(all_participants)) == len(all_participants)
+    print(all_participants)
+    if not participant_label:
+        return sorted(all_participants)
+
+    if isinstance(participant_label, str):
+        participant_label = [participant_label]
+
+    # Remove duplicates
+    participant_label = sorted(set(participant_label))
+    # Remove labels not found
+    found_label = sorted(set(participant_label) & all_participants)
+    if not found_label:
+        raise ValueError(
+            f"Could not find participants [{', '.join(participant_label)}]",
+            dset_dir,
+        )
+
+    if notfound_label := sorted(set(participant_label) - all_participants):
+        raise ValueError(
+            f"Some participants were not found: {', '.join(notfound_label)}",
+            dset_dir,
+        )
+
+    return found_label
+
+
 def collect_ukb_data(ukb_dir):
     """Collect necessary files from a UK Biobank dataset."""
     subj_data = {
