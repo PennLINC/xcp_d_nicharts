@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "xcp_d_nicharts"
 description = ""
 readme = "README.md"
-authors = ["Taylor Salo"]
+authors = [{name = "Taylor Salo"}]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -62,7 +62,6 @@ all = ["xcp_d_nicharts[doc,tests]"]
 
 [project.scripts]
 xcp_d_ukb = "xcp_d_nicharts.cli.ukb:_main"
-xcp_d_parcellate = "xcp_d_nicharts.cli.parcellate:_main"
 
 #
 # Hatch configurations

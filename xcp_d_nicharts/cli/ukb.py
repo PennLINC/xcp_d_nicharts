@@ -11,7 +11,7 @@ from time import strftime
 
 from niworkflows import NIWORKFLOWS_LOG
 
-from xcp_d.cli.parser_utils import _restricted_float, check_deps
+from xcp_d.cli.parser_utils import _float_or_auto, _restricted_float, check_deps
 
 warnings.filterwarnings("ignore")
 
@@ -121,17 +121,39 @@ def get_parser():
         "--input-type",
         "--input_type",
         required=False,
-        default="fmriprep",
-        choices=["fmriprep", "dcan", "hcp", "nibabies"],
-        help=(
-            "The pipeline used to generate the preprocessed derivatives. "
-            "The default pipeline is 'fmriprep'. "
-            "The 'dcan', 'hcp', and 'nibabies' pipelines are also supported. "
-            "'nibabies' assumes the same structure as 'fmriprep'."
-        ),
+        default="ukbiobank",
+        choices=["ukbiobank"],
+        help="The pipeline used to generate the preprocessed derivatives.",
     )
 
     g_param = parser.add_argument_group("Postprocessing parameters")
+    g_param.add_argument(
+        "--smoothing",
+        default=6,
+        action="store",
+        type=float,
+        help=(
+            "FWHM, in millimeters, of the Gaussian smoothing kernel to apply to the denoised BOLD "
+            "data. "
+            "This may be set to 0."
+        ),
+    )
+    g_param.add_argument(
+        "-p",
+        "--nuisance-regressors",
+        "--nuisance_regressors",
+        dest="nuisance_regressors",
+        required=False,
+        choices=[
+            "gsr",
+        ],
+        default="gsr",
+        type=str,
+        help=(
+            "Nuisance parameters to be selected. "
+            "Descriptions of each of the options are included in xcp_d's documentation."
+        ),
+    )
     g_param.add_argument(
         "--min_coverage",
         "--min-coverage",
@@ -143,6 +165,133 @@ def get_parser():
             "Any parcels with lower coverage than the threshold will be replaced with NaNs. "
             "Must be a value between zero and one, indicating proportion of the parcel. "
             "Default is 0.5."
+        ),
+    )
+
+    g_filter = parser.add_argument_group("Filtering parameters")
+
+    g_filter.add_argument(
+        "--disable-bandpass-filter",
+        "--disable_bandpass_filter",
+        dest="bandpass_filter",
+        action="store_false",
+        help=(
+            "Disable bandpass filtering. "
+            "If bandpass filtering is disabled, then ALFF derivatives will not be calculated."
+        ),
+    )
+    g_filter.add_argument(
+        "--lower-bpf",
+        "--lower_bpf",
+        action="store",
+        default=0.01,
+        type=float,
+        help=(
+            "Lower cut-off frequency (Hz) for the Butterworth bandpass filter to be applied to "
+            "the denoised BOLD data. Set to 0.0 or negative to disable high-pass filtering. "
+            "See Satterthwaite et al. (2013)."
+        ),
+    )
+    g_filter.add_argument(
+        "--upper-bpf",
+        "--upper_bpf",
+        action="store",
+        default=0.08,
+        type=float,
+        help=(
+            "Upper cut-off frequency (Hz) for the Butterworth bandpass filter to be applied to "
+            "the denoised BOLD data. Set to 0.0 or negative to disable low-pass filtering. "
+            "See Satterthwaite et al. (2013)."
+        ),
+    )
+    g_filter.add_argument(
+        "--bpf-order",
+        "--bpf_order",
+        action="store",
+        default=2,
+        type=int,
+        help="Number of filter coefficients for the Butterworth bandpass filter.",
+    )
+    g_filter.add_argument(
+        "--motion-filter-type",
+        "--motion_filter_type",
+        action="store",
+        type=str,
+        default=None,
+        choices=["lp", "notch"],
+        help="""\
+Type of filter to use for removing respiratory artifact from motion regressors.
+If not set, no filter will be applied.
+
+If the filter type is set to "notch", then both ``band-stop-min`` and ``band-stop-max``
+must be defined.
+If the filter type is set to "lp", then only ``band-stop-min`` must be defined.
+""",
+    )
+    g_filter.add_argument(
+        "--band-stop-min",
+        "--band_stop_min",
+        default=None,
+        type=float,
+        metavar="BPM",
+        help="""\
+Lower frequency for the motion parameter filter, in breaths-per-minute (bpm).
+Motion filtering is only performed if ``motion-filter-type`` is not None.
+If used with the "lp" ``motion-filter-type``, this parameter essentially corresponds to a
+low-pass filter (the maximum allowed frequency in the filtered data).
+This parameter is used in conjunction with ``motion-filter-order`` and ``band-stop-max``.
+
+When ``motion-filter-type`` is set to "lp" (low-pass filter), another commonly-used value for
+this parameter is 6 BPM (equivalent to 0.1 Hertz), based on Gratton et al. (2020).
+""",
+    )
+    g_filter.add_argument(
+        "--band-stop-max",
+        "--band_stop_max",
+        default=None,
+        type=float,
+        metavar="BPM",
+        help="""\
+Upper frequency for the band-stop motion filter, in breaths-per-minute (bpm).
+Motion filtering is only performed if ``motion-filter-type`` is not None.
+This parameter is only used if ``motion-filter-type`` is set to "notch".
+This parameter is used in conjunction with ``motion-filter-order`` and ``band-stop-min``.
+""",
+    )
+    g_filter.add_argument(
+        "--motion-filter-order",
+        "--motion_filter_order",
+        default=4,
+        type=int,
+        help="Number of filter coeffecients for the motion parameter filter.",
+    )
+
+    g_censor = parser.add_argument_group("Censoring and scrubbing options")
+    g_censor.add_argument(
+        "-r",
+        "--head_radius",
+        "--head-radius",
+        default=50,
+        type=_float_or_auto,
+        help=(
+            "Head radius used to calculate framewise displacement, in mm. "
+            "The default value is 50 mm, which is recommended for adults. "
+            "For infants, we recommend a value of 35 mm. "
+            "A value of 'auto' is also supported, in which case the brain radius is "
+            "estimated from the preprocessed brain mask by treating the mask as a sphere."
+        ),
+    )
+    g_censor.add_argument(
+        "-f",
+        "--fd-thresh",
+        "--fd_thresh",
+        default=0.3,
+        type=float,
+        help=(
+            "Framewise displacement threshold for censoring. "
+            "Any volumes with an FD value greater than the threshold will be removed from the "
+            "denoised BOLD data. "
+            "A threshold of <=0 will disable censoring completely."
         ),
     )
 
@@ -178,31 +327,6 @@ def get_parser():
         action="store_true",
         default=False,
         help="Opt out of sending tracking information.",
-    )
-
-    g_experimental = parser.add_argument_group("Experimental options")
-    g_experimental.add_argument(
-        "--warp-surfaces-native2std",
-        "--warp_surfaces_native2std",
-        action="store_true",
-        dest="process_surfaces",
-        default=False,
-        help="""\
-If used, a workflow will be run to warp native-space (``fsnative``) reconstructed cortical
-surfaces (``surf.gii`` files) produced by Freesurfer into standard (``fsLR``) space.
-These surface files are primarily used for visual quality assessment.
-By default, this workflow is disabled.
-
-**IMPORTANT**: This parameter can only be run if the --cifti flag is also enabled.
-""",
-    )
-    g_experimental.add_argument(
-        "--dcan-qc",
-        "--dcan_qc",
-        action="store_true",
-        dest="dcan_qc",
-        default=False,
-        help="Run DCAN QC, including executive summary generation.",
     )
 
     return parser
@@ -395,7 +519,8 @@ def build_workflow(opts, retval):
 
     from xcp_d.__about__ import __version__
     from xcp_d.utils.bids import collect_participants
-    from xcp_d.workflows.base import init_xcpd_wf
+
+    from xcp_d_nicharts.workflows.ukb import init_xcpd_ukb_wf
 
     log_level = int(max(25 - 5 * opts.verbose_count, logging.DEBUG))
 
@@ -445,7 +570,6 @@ def build_workflow(opts, retval):
     if opts.fd_thresh <= 0:
         ignored_params = "\n\t".join(
             [
-                "--min-time",
                 "--motion-filter-type",
                 "--band-stop-min",
                 "--band-stop-max",
@@ -457,7 +581,6 @@ def build_workflow(opts, retval):
             "Framewise displacement-based scrubbing is disabled. "
             f"The following parameters will have no effect:\n\t{ignored_params}"
         )
-        opts.min_time = 0
         opts.motion_filter_type = None
         opts.band_stop_min = None
         opts.band_stop_max = None
@@ -505,30 +628,6 @@ def build_workflow(opts, retval):
             "is not set."
         )
 
-    # Some parameters are automatically set depending on the input type.
-    if opts.input_type in ("dcan", "hcp"):
-        if not opts.cifti:
-            build_log.warning(
-                f"With input_type {opts.input_type}, cifti processing (--cifti) will be "
-                "enabled automatically."
-            )
-            opts.cifti = True
-
-        if not opts.process_surfaces:
-            build_log.warning(
-                f"With input_type {opts.input_type}, surface normalization "
-                "(--warp-surfaces-native2std) will be enabled automatically."
-            )
-            opts.process_surfaces = True
-
-    # process_surfaces and nifti processing are incompatible.
-    if opts.process_surfaces and not opts.cifti:
-        build_log.error(
-            "In order to perform surface normalization (--warp-surfaces-native2std), "
-            "you must enable cifti processing (--cifti)."
-        )
-        retval["return_code"] = 1
-
     if retval["return_code"] == 1:
         return retval
 
@@ -544,33 +643,6 @@ def build_workflow(opts, retval):
     retval["fmri_dir"] = str(fmri_dir)
     retval["output_dir"] = str(output_dir)
     retval["work_dir"] = str(work_dir)
-
-    # First check that fmriprep_dir looks like a BIDS folder
-    if opts.input_type in ("dcan", "hcp"):
-        if opts.input_type == "dcan":
-            from xcp_d.utils.dcan2fmriprep import convert_dcan2bids as convert_to_bids
-        elif opts.input_type == "hcp":
-            from xcp_d.utils.hcp2fmriprep import convert_hcp2bids as convert_to_bids
-
-        NIWORKFLOWS_LOG.info(f"Converting {opts.input_type} to fmriprep format")
-        converted_fmri_dir = os.path.join(work_dir, f"dset_bids/derivatives/{opts.input_type}")
-        os.makedirs(converted_fmri_dir, exist_ok=True)
-
-        convert_to_bids(
-            fmri_dir,
-            out_dir=converted_fmri_dir,
-            participant_ids=opts.participant_label,
-        )
-
-        fmri_dir = converted_fmri_dir
-
-    if not os.path.isfile((os.path.join(fmri_dir, "dataset_description.json"))):
-        build_log.error(
-            "No dataset_description.json file found in input directory. "
-            "Make sure to point to the specific pipeline's derivatives folder. "
-            "For example, use '/dset/derivatives/fmriprep', not /dset/derivatives'."
-        )
-        retval["return_code"] = 1
 
     # Set up some instrumental utilities
     run_uuid = f"{strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4()}"
@@ -672,7 +744,7 @@ Running xcp_d version {__version__}:
 """,
     )
 
-    retval["workflow"] = init_xcpd_wf(
+    retval["workflow"] = init_xcpd_ukb_wf(
         layout=layout,
         omp_nthreads=omp_nthreads,
         fmri_dir=str(fmri_dir),
@@ -686,24 +758,16 @@ Running xcp_d version {__version__}:
         band_stop_max=opts.band_stop_max,
         subject_list=subject_list,
         work_dir=str(work_dir),
-        task_id=opts.task_id,
-        bids_filters=opts.bids_filters,
         despike=opts.despike,
         smoothing=opts.smoothing,
         params=opts.nuisance_regressors,
-        cifti=opts.cifti,
         analysis_level=opts.analysis_level,
         output_dir=str(output_dir),
         head_radius=opts.head_radius,
-        custom_confounds_folder=opts.custom_confounds,
         dummy_scans=opts.dummy_scans,
         fd_thresh=opts.fd_thresh,
-        process_surfaces=opts.process_surfaces,
-        dcan_qc=opts.dcan_qc,
         input_type=opts.input_type,
         min_coverage=opts.min_coverage,
-        min_time=opts.min_time,
-        combineruns=opts.combineruns,
         name="xcpd_wf",
     )
 

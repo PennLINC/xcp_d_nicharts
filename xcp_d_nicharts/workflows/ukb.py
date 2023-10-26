@@ -280,8 +280,8 @@ def init_subject_wf(
         TR=t_r,
         low_pass=low_pass,
         high_pass=high_pass,
-        bpf_order=0,  # TODO: FIX
-        bandpass_filter=False,  # TODO: FIX
+        bpf_order=2,
+        bandpass_filter=True,
         smoothing=smoothing,
         cifti=False,
         mem_gb=1,
