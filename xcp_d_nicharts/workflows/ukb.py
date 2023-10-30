@@ -190,6 +190,11 @@ def init_subject_wf(
         bids_filters=bids_filters,
     )
 
+    head_radius = estimate_brain_radius(
+        mask_file=subj_data["brainmask"],
+        head_radius=head_radius,
+    )
+
     inputnode = pe.Node(
         niu.IdentityInterface(
             fields=[
@@ -253,17 +258,6 @@ def init_subject_wf(
     )
     workflow.connect([(add_motion_headers, make_motion_confounds, [("out_file", "motion")])])
 
-    get_brain_radius = pe.Node(
-        Function(
-            input_names=["mask_file", "head_radius"],
-            output_names=["head_radius"],
-            function=estimate_brain_radius,
-        ),
-        name="get_brain_radius",
-    )
-    get_brain_radius.inputs.head_radius = head_radius
-    workflow.connect([(inputnode, get_brain_radius, [("brainmask", "mask_file")])])
-
     flag_motion_outliers = pe.Node(
         GenerateConfounds(
             in_file=name_source,
@@ -275,6 +269,7 @@ def init_subject_wf(
             motion_filter_order=motion_filter_order,
             band_stop_min=band_stop_min,
             band_stop_max=band_stop_max,
+            head_radius=head_radius,
         ),
         name="flag_motion_outliers",
     )
@@ -285,7 +280,6 @@ def init_subject_wf(
             ("confounds_file", "fmriprep_confounds_file"),
             ("confounds_json", "fmriprep_confounds_json"),
         ]),
-        (get_brain_radius, flag_motion_outliers, [("brain_radius", "head_radius")]),
     ])
     # fmt:on
 

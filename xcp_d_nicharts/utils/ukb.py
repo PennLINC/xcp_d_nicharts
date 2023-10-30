@@ -99,6 +99,7 @@ def create_regression_confounds(bold_file, mask_file):
     """Create global signal confounds file."""
     import os
 
+    import numpy as np
     import pandas as pd
     from xcp_d.utils.ingestion import extract_mean_signal
 
@@ -112,6 +113,8 @@ def create_regression_confounds(bold_file, mask_file):
     )
 
     confounds_df = pd.DataFrame(columns=["global_signal"], data=mean_gs)
+    confounds_df["linear_trend"] = np.arange(confounds_df.shape[0])
+    confounds_df["intercept"] = 1
 
     # Write out the confounds file
     confounds_df.to_csv(confounds_file, sep="\t", index=False)

@@ -512,7 +512,6 @@ def main(args=None):
             run_uuid=run_uuid,
             config=pkgrf("xcp_d", "data/reports.yml"),
             packagename="xcp_d",
-            dcan_qc=False,
         )
 
         if failed_reports and not opts.notrack:
