@@ -5,6 +5,7 @@ but we want to additionally run global signal regression on these data,
 before running XCP-D's parcellation code on them.
 """
 import os
+from glob import glob
 
 import numpy as np
 from nilearn import masking
@@ -17,20 +18,16 @@ def collect_participants(dset_dir, participant_label=None):
 
     subfolders = sorted(glob(os.path.join(dset_dir, "*_*")))
     subfolders = [f for f in subfolders if os.path.isdir(f)]
-    print(subfolders)
     subsubfolders = [
         [os.path.basename(sf) for sf in sorted(glob(os.path.join(f, "*")))] for f in subfolders
     ]
-    print(subsubfolders)
     ukb_subfolders = [
         f
         for i, f in enumerate(subfolders)
         if ("T1" in subsubfolders[i]) and ("fMRI" in subsubfolders[i])
     ]
-    print(ukb_subfolders)
     all_participants = [os.path.basename(f).split("_")[0] for f in ukb_subfolders]
     assert len(set(all_participants)) == len(all_participants)
-    print(all_participants)
     if not participant_label:
         return sorted(all_participants)
 
@@ -56,14 +53,39 @@ def collect_participants(dset_dir, participant_label=None):
     return found_label
 
 
-def collect_ukb_data(ukb_dir):
+def collect_ukb_data(ukb_dir, participant_label, bids_filters={}):
     """Collect necessary files from a UK Biobank dataset."""
+    bids_filters = bids_filters or {}
+    if "session" in bids_filters.keys():
+        session = bids_filters["session"]
+        assert isinstance(session, str)
+        if len(session) in (1, 2):
+            presession = int(session)
+            postsession = 0
+        elif len(session) == 4:
+            presession = int(session[:2])
+            postsession = int(session[2:])
+
+        subject_dir = os.path.join(ukb_dir, f"{participant_label}_{presession}_{postsession}")
+    else:
+        subject_dir = sorted(glob(os.path.join(ukb_dir, f"{participant_label}_*_*")))
+        subject_dir = [d for d in subject_dir if os.path.isdir(d)]
+        if len(subject_dir) != 1:
+            subject_dir_str = "\n".join(subject_dir)
+            raise ValueError(f"Wrong number of session folders found:\n{subject_dir_str}")
+        subject_dir = subject_dir[0]
+
     subj_data = {
-        "bold": os.path.join(ukb_dir, "fMRI", "rfMRI.ica", "filtered_func_data_clean.nii.gz"),
-        "brainmask": os.path.join(ukb_dir, "fMRI", "rfMRI.ica", "mask.nii.gz"),
-        "t1w": os.path.join(ukb_dir, "T1", "T1_brain.nii.gz"),
+        "bold": os.path.join(
+            subject_dir,
+            "fMRI",
+            "rfMRI.ica",
+            "filtered_func_data_clean.nii.gz",
+        ),
+        "brainmask": os.path.join(subject_dir, "fMRI", "rfMRI.ica", "mask.nii.gz"),
+        "t1w": os.path.join(subject_dir, "T1", "T1_brain.nii.gz"),
         "motion": os.path.join(
-            ukb_dir,
+            subject_dir,
             "fMRI",
             "rfMRI.ica",
             "mc",

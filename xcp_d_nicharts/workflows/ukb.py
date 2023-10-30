@@ -1,9 +1,12 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 """Workflows for postprocessing UK Biobank data."""
+import json
 import os
 from copy import deepcopy
+from pathlib import Path
 
+import nibabel as nb
 from nipype import Function, logging
 from nipype.interfaces import utility as niu
 from nipype.pipeline import engine as pe
@@ -38,6 +41,7 @@ def init_xcpd_ukb_wf(
     work_dir,
     subject_list,
     analysis_level,
+    bids_filters,
     omp_nthreads,
     motion_filter_type,
     motion_filter_order,
@@ -45,6 +49,7 @@ def init_xcpd_ukb_wf(
     band_stop_max,
     despike,
     min_coverage,
+    head_radius,
     fd_thresh,
     low_pass,
     high_pass,
@@ -63,6 +68,7 @@ def init_xcpd_ukb_wf(
     work_dir
     subject_list
     analysis_level
+    bids_filters
     omp_nthreads
     motion_filter_type
     motion_filter_order
@@ -70,6 +76,7 @@ def init_xcpd_ukb_wf(
     band_stop_max
     despike
     min_coverage
+    head_radius
     fd_thresh
     low_pass
     high_pass
@@ -80,12 +87,17 @@ def init_xcpd_ukb_wf(
     xcpd_wf.base_dir = work_dir
     LOGGER.info(f"Beginning the {name} workflow")
 
+    with open(os.path.join(fmri_dir, "dataset_description.json"), "w") as fo:
+        json.dump({"DatasetType": "derivative"}, fo)
+
     write_dataset_description(fmri_dir, os.path.join(output_dir, "xcp_d"))
 
     for subject_id in subject_list:
         single_subj_wf = init_subject_wf(
             fmri_dir=fmri_dir,
+            work_dir=work_dir,
             subject_id=subject_id,
+            bids_filters=bids_filters,
             output_dir=output_dir,
             motion_filter_type=motion_filter_type,
             motion_filter_order=motion_filter_order,
@@ -93,6 +105,7 @@ def init_xcpd_ukb_wf(
             band_stop_max=band_stop_max,
             despike=despike,
             min_coverage=min_coverage,
+            head_radius=head_radius,
             fd_thresh=fd_thresh,
             low_pass=low_pass,
             high_pass=high_pass,
@@ -118,7 +131,9 @@ def init_xcpd_ukb_wf(
 
 def init_subject_wf(
     fmri_dir,
+    work_dir,
     subject_id,
+    bids_filters,
     output_dir,
     motion_filter_type,
     motion_filter_order,
@@ -126,6 +141,7 @@ def init_subject_wf(
     band_stop_max,
     despike,
     min_coverage,
+    head_radius,
     fd_thresh,
     low_pass,
     high_pass,
@@ -147,6 +163,7 @@ def init_subject_wf(
     band_stop_max
     despike
     min_coverage
+    head_radius
     fd_thresh
     low_pass
     high_pass
@@ -155,15 +172,23 @@ def init_subject_wf(
     omp_nthreads
     name
     """
-    name_source = (
-        f"/dset/sub-{subject_id}/func/"
-        f"sub-{subject_id}_task-rest_space-MNI152NLin6Asym_desc-preproc_bold.nii.gz"
+    os.makedirs(os.path.join(work_dir, f"sub-{subject_id}/func/"), exist_ok=True)
+    name_source = os.path.join(
+        work_dir,
+        f"sub-{subject_id}",
+        "func",
+        f"sub-{subject_id}_task-rest_space-MNI152NLin6Asym_desc-preproc_bold.nii.gz",
     )
+    Path(name_source).touch()  # touch file to make it exist
     t_r = 0.8  # TODO: FIND CORRECT TR
 
     workflow = Workflow(name=name)
 
-    subj_data = collect_ukb_data(ukb_dir=os.path.join(fmri_dir, subject_id))
+    subj_data = collect_ukb_data(
+        ukb_dir=fmri_dir,
+        participant_label=subject_id,
+        bids_filters=bids_filters,
+    )
 
     inputnode = pe.Node(
         niu.IdentityInterface(
@@ -182,6 +207,8 @@ def init_subject_wf(
     inputnode.inputs.t1w = subj_data["t1w"]
     inputnode.inputs.brainmask = subj_data["brainmask"]
     inputnode.inputs.par_file = subj_data["motion"]
+
+    mem_gbx = _create_mem_gb(subj_data["bold"])
 
     # Load the atlases, warping to the same space as the BOLD data if necessary.
     load_atlases_wf = init_load_atlases_wf(
@@ -228,17 +255,18 @@ def init_subject_wf(
 
     get_brain_radius = pe.Node(
         Function(
-            input_names=["mask_file"],
+            input_names=["mask_file", "head_radius"],
             output_names=["head_radius"],
             function=estimate_brain_radius,
         ),
         name="get_brain_radius",
     )
+    get_brain_radius.inputs.head_radius = head_radius
     workflow.connect([(inputnode, get_brain_radius, [("brainmask", "mask_file")])])
 
     flag_motion_outliers = pe.Node(
         GenerateConfounds(
-            in_file="",
+            in_file=name_source,
             params="none",
             TR=t_r,
             fd_thresh=fd_thresh,
@@ -288,8 +316,8 @@ def init_subject_wf(
         bandpass_filter=((low_pass != 0) or (high_pass != 0)),
         smoothing=smoothing,
         cifti=False,
-        mem_gb=1,
-        omp_nthreads=1,
+        mem_gb=mem_gbx["timeseries"],
+        omp_nthreads=omp_nthreads,
         name="denoise_bold_wf",
     )
 
@@ -336,6 +364,8 @@ def init_subject_wf(
         high_pass=high_pass,
         smoothing=smoothing,
         cifti=False,
+        mem_gb=mem_gbx["timeseries"],
+        omp_nthreads=omp_nthreads,
         name="alff_wf",
     )
 
@@ -351,6 +381,8 @@ def init_subject_wf(
     reho_wf = init_reho_nifti_wf(
         name_source=name_source,
         output_dir=output_dir,
+        mem_gb=mem_gbx["timeseries"],
+        omp_nthreads=omp_nthreads,
         name="reho_wf",
     )
 
@@ -368,15 +400,13 @@ def init_subject_wf(
         output_dir=output_dir,
         alff_available=True,
         min_coverage=min_coverage,
-        mem_gb=1,
+        mem_gb=mem_gbx["timeseries"] * 3,
         name="connectivity_wf",
     )
 
     # fmt:off
     workflow.connect([
-        (inputnode, connectivity_wf, [
-            ("name_source", "inputnode.name_source"),
-        ]),
+        (inputnode, connectivity_wf, [("name_source", "inputnode.name_source")]),
         (load_atlases_wf, connectivity_wf, [
             ("outputnode.atlas_names", "inputnode.atlas_names"),
             ("outputnode.atlas_files", "inputnode.atlas_files"),
@@ -402,7 +432,7 @@ def init_subject_wf(
         ),
         name="ds_temporal_mask",
         run_without_submitting=True,
-        mem_gb=1,
+        mem_gb=mem_gbx["timeseries"],
     )
 
     # fmt:off
@@ -425,14 +455,14 @@ def init_subject_wf(
         ),
         name="ds_filtered_motion",
         run_without_submitting=True,
-        mem_gb=1,
+        mem_gb=mem_gbx["timeseries"],
     )
 
     # fmt:off
     workflow.connect([
         (flag_motion_outliers, ds_filtered_motion, [
             ("motion_metadata", "meta_dict"),
-            ("filtered_motion", "in_file"),
+            ("motion_file", "in_file"),
         ]),
     ])
     # fmt:on
@@ -447,7 +477,7 @@ def init_subject_wf(
         ),
         name="ds_coverage_files",
         run_without_submitting=True,
-        mem_gb=1,
+        mem_gb=mem_gbx["timeseries"],
         iterfield=["atlas", "in_file"],
     )
     ds_timeseries = pe.MapNode(
@@ -460,7 +490,7 @@ def init_subject_wf(
         ),
         name="ds_timeseries",
         run_without_submitting=True,
-        mem_gb=1,
+        mem_gb=mem_gbx["timeseries"],
         iterfield=["atlas", "in_file"],
     )
     ds_correlations = pe.MapNode(
@@ -474,7 +504,7 @@ def init_subject_wf(
         ),
         name="ds_correlations",
         run_without_submitting=True,
-        mem_gb=1,
+        mem_gb=mem_gbx["timeseries"],
         iterfield=["atlas", "in_file"],
     )
     ds_parcellated_reho = pe.MapNode(
@@ -487,20 +517,20 @@ def init_subject_wf(
         ),
         name="ds_parcellated_reho",
         run_without_submitting=True,
-        mem_gb=1,
+        mem_gb=mem_gbx["timeseries"],
         iterfield=["atlas", "in_file"],
     )
 
     # fmt:off
     workflow.connect([
         (load_atlases_wf, ds_coverage_files, [("outputnode.atlas_names", "atlas")]),
-        (connectivity_wf, ds_coverage_files, [("coverage", "in_file")]),
+        (connectivity_wf, ds_coverage_files, [("outputnode.coverage", "in_file")]),
         (load_atlases_wf, ds_timeseries, [("outputnode.atlas_names", "atlas")]),
-        (connectivity_wf, ds_timeseries, [("timeseries", "in_file")]),
+        (connectivity_wf, ds_timeseries, [("outputnode.timeseries", "in_file")]),
         (load_atlases_wf, ds_correlations, [("outputnode.atlas_names", "atlas")]),
-        (connectivity_wf, ds_correlations, [("correlations", "in_file")]),
+        (connectivity_wf, ds_correlations, [("outputnode.correlations", "in_file")]),
         (load_atlases_wf, ds_parcellated_reho, [("outputnode.atlas_names", "atlas")]),
-        (connectivity_wf, ds_parcellated_reho, [("parcellated_reho", "in_file")]),
+        (connectivity_wf, ds_parcellated_reho, [("outputnode.parcellated_reho", "in_file")]),
     ])
     # fmt:on
 
@@ -514,7 +544,7 @@ def init_subject_wf(
         ),
         name="ds_denoised_bold",
         run_without_submitting=True,
-        mem_gb=2,
+        mem_gb=mem_gbx["timeseries"],
     )
 
     ds_reho = pe.Node(
@@ -528,7 +558,7 @@ def init_subject_wf(
         ),
         name="ds_reho",
         run_without_submitting=True,
-        mem_gb=1,
+        mem_gb=mem_gbx["timeseries"],
     )
 
     # fmt:off
@@ -543,3 +573,22 @@ def init_subject_wf(
             workflow.get_node(node).interface.out_path_base = "xcp_d"
 
     return workflow
+
+
+def _create_mem_gb(bold_fname):
+    bold_size_gb = os.path.getsize(bold_fname) / (1024**3)
+    bold_tlen = nb.load(bold_fname).shape[-1]
+    mem_gbz = {
+        "derivative": bold_size_gb,
+        "resampled": bold_size_gb * 4,
+        "timeseries": bold_size_gb * (max(bold_tlen / 100, 1.0) + 4),
+    }
+
+    if mem_gbz["timeseries"] < 4.0:
+        mem_gbz["timeseries"] = 6.0
+        mem_gbz["resampled"] = 2
+    elif mem_gbz["timeseries"] > 8.0:
+        mem_gbz["timeseries"] = 8.0
+        mem_gbz["resampled"] = 3
+
+    return mem_gbz

@@ -9,7 +9,12 @@ from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from pathlib import Path
 from time import strftime
 
-from xcp_d.cli.parser_utils import _float_or_auto, _restricted_float, check_deps
+from xcp_d.cli.parser_utils import (
+    _float_or_auto,
+    _restricted_float,
+    check_deps,
+    json_file,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -70,6 +75,15 @@ def get_parser():
             "A space-delimited list of participant identifiers, or a single identifier. "
             "The 'sub-' prefix can be removed."
         ),
+    )
+    g_bids.add_argument(
+        "--bids-filter-file",
+        dest="bids_filters",
+        action="store",
+        type=json_file,
+        default=None,
+        metavar="FILE",
+        help="A JSON file defining BIDS input filters using PyBIDS.",
     )
 
     g_perfm = parser.add_argument_group("Options for resource management")
@@ -498,7 +512,7 @@ def main(args=None):
             run_uuid=run_uuid,
             config=pkgrf("xcp_d", "data/reports.yml"),
             packagename="xcp_d",
-            dcan_qc=opts.dcan_qc,
+            dcan_qc=False,
         )
 
         if failed_reports and not opts.notrack:
@@ -748,10 +762,10 @@ Running xcp_d version {__version__}:
     retval["workflow"] = init_xcpd_ukb_wf(
         omp_nthreads=omp_nthreads,
         fmri_dir=str(fmri_dir),
+        bids_filters=opts.bids_filters,
         high_pass=opts.lower_bpf,
         low_pass=opts.upper_bpf,
         bpf_order=opts.bpf_order,
-        bandpass_filter=opts.bandpass_filter,
         motion_filter_type=opts.motion_filter_type,
         motion_filter_order=opts.motion_filter_order,
         band_stop_min=opts.band_stop_min,
@@ -760,12 +774,10 @@ Running xcp_d version {__version__}:
         work_dir=str(work_dir),
         despike=opts.despike,
         smoothing=opts.smoothing,
-        params=opts.nuisance_regressors,
         analysis_level=opts.analysis_level,
         output_dir=str(output_dir),
         head_radius=opts.head_radius,
         fd_thresh=opts.fd_thresh,
-        input_type=opts.input_type,
         min_coverage=opts.min_coverage,
         name="xcpd_wf",
     )
