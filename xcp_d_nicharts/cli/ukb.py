@@ -581,26 +581,6 @@ def build_workflow(opts, retval):
     elif not opts.bandpass_filter:
         build_log.warning("Bandpass filtering is disabled. ALFF outputs will not be generated.")
 
-    # Scrubbing parameters
-    if opts.fd_thresh <= 0:
-        ignored_params = "\n\t".join(
-            [
-                "--motion-filter-type",
-                "--band-stop-min",
-                "--band-stop-max",
-                "--motion-filter-order",
-                "--head_radius",
-            ]
-        )
-        build_log.warning(
-            "Framewise displacement-based scrubbing is disabled. "
-            f"The following parameters will have no effect:\n\t{ignored_params}"
-        )
-        opts.motion_filter_type = None
-        opts.band_stop_min = None
-        opts.band_stop_max = None
-        opts.motion_filter_order = None
-
     # Motion filtering parameters
     if opts.motion_filter_type == "notch":
         if not (opts.band_stop_min and opts.band_stop_max):

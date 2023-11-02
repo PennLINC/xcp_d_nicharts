@@ -28,6 +28,7 @@ def collect_participants(dset_dir, participant_label=None):
     ]
     all_participants = [os.path.basename(f).split("_")[0] for f in ukb_subfolders]
     assert len(set(all_participants)) == len(all_participants)
+    all_participants = set(all_participants)
     if not participant_label:
         return sorted(all_participants)
 
@@ -84,6 +85,13 @@ def collect_ukb_data(ukb_dir, participant_label, bids_filters={}):
         ),
         "brainmask": os.path.join(subject_dir, "fMRI", "rfMRI.ica", "mask.nii.gz"),
         "t1w": os.path.join(subject_dir, "T1", "T1_brain.nii.gz"),
+        "warp_file": os.path.join(
+            subject_dir,
+            "fMRI",
+            "rfMRI.ica",
+            "reg",
+            "example_func2standard_warp.nii.gz",
+        ),
         "motion": os.path.join(
             subject_dir,
             "fMRI",

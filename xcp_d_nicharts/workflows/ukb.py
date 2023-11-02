@@ -9,10 +9,12 @@ from pathlib import Path
 import nibabel as nb
 from nipype import Function, logging
 from nipype.interfaces import utility as niu
+from nipype.interfaces.fsl.preprocess import ApplyWarp
 from nipype.pipeline import engine as pe
 from niworkflows.engine.workflows import LiterateWorkflow as Workflow
 from niworkflows.interfaces.confounds import NormalizeMotionParams
 from niworkflows.interfaces.utility import AddTSVHeader
+from templateflow.api import get as get_template
 from xcp_d.interfaces.bids import DerivativesDataSink
 from xcp_d.interfaces.censoring import GenerateConfounds
 from xcp_d.utils.bids import write_dataset_description
@@ -180,7 +182,7 @@ def init_subject_wf(
         f"sub-{subject_id}_task-rest_space-MNI152NLin6Asym_desc-preproc_bold.nii.gz",
     )
     Path(name_source).touch()  # touch file to make it exist
-    t_r = 0.8  # TODO: FIND CORRECT TR
+    t_r = 0.735  # From filtered_func_data_clean.nii.gz
 
     workflow = Workflow(name=name)
 
@@ -200,8 +202,8 @@ def init_subject_wf(
             fields=[
                 "name_source",
                 "bold_file",
-                "t1w",
                 "brainmask",
+                "warp_file",
                 "par_file",
             ],
         ),
@@ -209,11 +211,40 @@ def init_subject_wf(
     )
     inputnode.inputs.name_source = name_source
     inputnode.inputs.bold_file = subj_data["bold"]
-    inputnode.inputs.t1w = subj_data["t1w"]
     inputnode.inputs.brainmask = subj_data["brainmask"]
+    inputnode.inputs.warp_file = subj_data["warp_file"]
     inputnode.inputs.par_file = subj_data["motion"]
 
+    template_file = str(
+        get_template(template="MNI152NLin6Asym", res="02", suffix="T1w", desc=None)
+    )
+
     mem_gbx = _create_mem_gb(subj_data["bold"])
+
+    # Warp BOLD, T1w, and brainmask to MNI152NLin6Asym
+    warp_bold_to_std = pe.Node(
+        ApplyWarp(
+            interp="spline",
+            output_type="NIFTI_GZ",
+            ref_file=template_file,
+        ),
+        name="warp_bold_to_std",
+        mem_gb=mem_gbx["timeseries"],
+        omp_nthreads=omp_nthreads,
+    )
+    workflow.connect([(inputnode, warp_bold_to_std, [("bold_file", "in_file")])])
+
+    warp_brainmask_to_std = pe.Node(
+        ApplyWarp(
+            interp="nn",
+            output_type="NIFTI_GZ",
+            ref_file=template_file,
+        ),
+        name="warp_brainmask_to_std",
+        mem_gb=mem_gbx["timeseries"],
+        omp_nthreads=omp_nthreads,
+    )
+    workflow.connect([(inputnode, warp_brainmask_to_std, [("brainmask", "in_file")])])
 
     # Load the atlases, warping to the same space as the BOLD data if necessary.
     load_atlases_wf = init_load_atlases_wf(
@@ -226,10 +257,8 @@ def init_subject_wf(
 
     # fmt:off
     workflow.connect([
-        (inputnode, load_atlases_wf, [
-            ("name_source", "inputnode.name_source"),
-            ("bold_file", "inputnode.bold_file"),
-        ]),
+        (inputnode, load_atlases_wf, [("name_source", "inputnode.name_source")]),
+        (warp_bold_to_std, load_atlases_wf, [("out_file", "inputnode.bold_file")]),
     ])
     # fmt:on
 
@@ -294,10 +323,8 @@ def init_subject_wf(
 
     # fmt:off
     workflow.connect([
-        (inputnode, make_regression_confounds, [
-            ("bold_file", "bold_file"),
-            ("brainmask", "mask_file"),
-        ]),
+        (warp_bold_to_std, make_regression_confounds, [("out_file", "bold_file")]),
+        (warp_brainmask_to_std, make_regression_confounds, [("out_file", "mask_file")]),
     ])
     # fmt:on
 
@@ -325,7 +352,7 @@ def init_subject_wf(
 
         # fmt:off
         workflow.connect([
-            (inputnode, despike_wf, [("bold_file", "inputnode.bold_file")]),
+            (warp_bold_to_std, despike_wf, [("out_file", "inputnode.bold_file")]),
             (despike_wf, denoise_bold_wf, [
                 ("outputnode.bold_file", "inputnode.preprocessed_bold"),
             ]),
@@ -335,13 +362,13 @@ def init_subject_wf(
     else:
         # fmt:off
         workflow.connect([
-            (inputnode, denoise_bold_wf, [("bold_file", "inputnode.preprocessed_bold")]),
+            (warp_bold_to_std, denoise_bold_wf, [("out_file", "inputnode.preprocessed_bold")]),
         ])
         # fmt:on
 
     # fmt:off
     workflow.connect([
-        (inputnode, denoise_bold_wf, [("brainmask", "inputnode.mask")]),
+        (warp_brainmask_to_std, denoise_bold_wf, [("out_file", "inputnode.mask")]),
         (make_regression_confounds, denoise_bold_wf, [
             ("confounds_file", "inputnode.confounds_file"),
         ]),
@@ -365,7 +392,7 @@ def init_subject_wf(
 
     # fmt:off
     workflow.connect([
-        (inputnode, alff_wf, [("brainmask", "inputnode.bold_mask")]),
+        (warp_brainmask_to_std, alff_wf, [("out_file", "inputnode.bold_mask")]),
         (denoise_bold_wf, alff_wf, [
             ("outputnode.censored_denoised_bold", "inputnode.denoised_bold"),
         ]),
@@ -382,7 +409,7 @@ def init_subject_wf(
 
     # fmt:off
     workflow.connect([
-        (inputnode, reho_wf, [("brainmask", "inputnode.bold_mask")]),
+        (warp_brainmask_to_std, reho_wf, [("out_file", "inputnode.bold_mask")]),
         (denoise_bold_wf, reho_wf, [
             ("outputnode.censored_denoised_bold", "inputnode.denoised_bold"),
         ]),
@@ -401,6 +428,7 @@ def init_subject_wf(
     # fmt:off
     workflow.connect([
         (inputnode, connectivity_wf, [("name_source", "inputnode.name_source")]),
+        (warp_brainmask_to_std, connectivity_wf, [("out_file", "inputnode.bold_mask")]),
         (load_atlases_wf, connectivity_wf, [
             ("outputnode.atlas_names", "inputnode.atlas_names"),
             ("outputnode.atlas_files", "inputnode.atlas_files"),
