@@ -216,7 +216,7 @@ def init_subject_wf(
     inputnode.inputs.par_file = subj_data["motion"]
 
     template_file = str(
-        get_template(template="MNI152NLin6Asym", res="02", suffix="T1w", desc=None)
+        get_template(template="MNI152NLin6Asym", resolution="02", suffix="T1w", desc=None)
     )
 
     mem_gbx = _create_mem_gb(subj_data["bold"])

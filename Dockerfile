@@ -1,3 +1,4 @@
+FROM pennlinc/xcp_d:0.1.3 as build_fsl
 FROM pennlinc/xcp_d:unstable
 
 # Install xcp_d extension
@@ -16,6 +17,9 @@ RUN find $HOME -type d -exec chmod go=u {} + && \
 
 RUN ldconfig
 WORKDIR /tmp/
+
+# Add FSL's applywarp
+COPY --from=build_fsl /usr/lib/fsl/5.0/applywarp /opt/fsl/lib/applywarp
 
 ENTRYPOINT ["/usr/local/miniconda/bin/xcp_d_ukb"]
 
