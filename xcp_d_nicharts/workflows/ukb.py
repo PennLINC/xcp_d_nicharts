@@ -232,7 +232,12 @@ def init_subject_wf(
         mem_gb=mem_gbx["timeseries"],
         omp_nthreads=omp_nthreads,
     )
-    workflow.connect([(inputnode, warp_bold_to_std, [("bold_file", "in_file")])])
+    workflow.connect([
+        (inputnode, warp_bold_to_std, [
+            ("bold_file", "in_file"),
+            ("warp_file", "field_file"),
+        ]),
+    ])  # fmt:skip
 
     warp_brainmask_to_std = pe.Node(
         ApplyWarp(
@@ -244,7 +249,12 @@ def init_subject_wf(
         mem_gb=mem_gbx["timeseries"],
         omp_nthreads=omp_nthreads,
     )
-    workflow.connect([(inputnode, warp_brainmask_to_std, [("brainmask", "in_file")])])
+    workflow.connect([
+        (inputnode, warp_brainmask_to_std, [
+            ("brainmask", "in_file"),
+            ("warp_file", "field_file"),
+        ]),
+    ])  # fmt:skip
 
     # Load the atlases, warping to the same space as the BOLD data if necessary.
     load_atlases_wf = init_load_atlases_wf(

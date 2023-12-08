@@ -141,7 +141,7 @@ def get_parser():
     g_param = parser.add_argument_group("Postprocessing parameters")
     g_param.add_argument(
         "--smoothing",
-        default=6,
+        default=0,
         action="store",
         type=float,
         help=(

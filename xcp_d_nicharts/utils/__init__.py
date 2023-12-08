@@ -1,7 +1,6 @@
 """Utils module."""
-from xcp_d_nicharts.utils import parcellation, ukb
+from xcp_d_nicharts.utils import ukb
 
 __all__ = [
-    "parcellation",
     "ukb",
 ]
